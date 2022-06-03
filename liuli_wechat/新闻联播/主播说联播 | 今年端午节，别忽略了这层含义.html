@@ -1,0 +1,1770 @@
+<!DOCTYPE html>
+<html class="">
+  <head>
+            <meta name="wechat-enable-text-zoom-em" content="true">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=0,viewport-fit=cover">
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="format-detection" content="telephone=no">
+<script  nonce="12821795" reportloaderror>try{document.getElementsByTagName('html').item(0).style.webkitTextSizeAdjust=JSON.parse(window.__wxWebEnv.getEnv()).fontScale+'%'}catch(e){}</script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+  window.logs = { pagetime: {} };
+  window.logs.pagetime['html_begin'] = (+new Date());
+  window.LANG = "zh_CN"; // 页面语言 zh_CN en_US
+</script>
+
+    <script type="text/javascript" nonce="12821795" reportloaderror>
+/**
+ * 于2022-02-21重构vite
+ * 仅保留原有moon.js中上报相关的部分
+ * @author baakqiu
+ * @date 2022-02-21
+ */
+
+var WX_BJ_REPORT = window.WX_BJ_REPORT || {};
+(function(_) {
+  if (_.BadJs) {
+    return;
+  }
+  //onerror上报名 
+  var BADJS_WIN_ERR = 'BadjsWindowError';
+  var extend = function(source, destination) {
+    for (var property in destination) {
+      source[property] = destination[property]
+    }
+    return source
+  }
+  /*
+    出错上报字段:mid name key  msg  stack file col line uin
+    mid 模块名
+    name 监控名
+    key 特征值
+    msg 额外信息
+  */
+  _.BadJs = {
+    uin: 0,
+    mid: "",
+    view: "wap",
+    _cache: {}, //上报_cache 同一mid name key 只会上报一次
+    _info: {}, // 打点记录 会写入msg帮助定位
+    _hookCallback: null,
+    ignorePath: true,
+    throw: function(e, extData) {
+      this.onError(e, extData);
+      throw e;
+    },
+    //接收异常并上报处理 如果有额外信息可以放在第二个参数_data中
+    // _data 只能覆盖上报协议的字段mid （name,key 不建议通过data覆盖） msg  stack file col line uin
+    onError: function(e, extData) {
+      try {
+        //标记已执行的throw
+        if (e.BADJS_EXCUTED == true) {
+          return;
+        }
+        e.BADJS_EXCUTED = true;
+        var data = errToData(e);
+        data.uin = this.uin;
+        data.mid = this.mid;
+        data.view = this.view;
+        data.cmdb_module = 'mmbizwap';
+        //data.msg = msg || data.msg;
+        if (!!extData) {
+          data = extend(data, extData);
+        }
+        //如果cid存在 将cid合并到key
+        if (data.cid) {
+          data.key = "[" + data.cid + "]:" + data.key;
+        }
+        
+        if (data._info) {
+          if (Object.prototype.toString.call(data._info) == "[object Object]") {
+            data.msg += " || info:" + JSON.stringify(data._info);
+          } else if (Object.prototype.toString.call(data._info) == "[object String]") {
+            data.msg += " || info:" + data._info;
+          } else {
+            data.msg += " || info:" + data._info;
+          }
+        }
+        if (typeof this._hookCallback == "function") {
+          if (this._hookCallback(data) === false) {
+            return
+          }
+        }
+        this._send(data);
+        return _.BadJs;
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    winErr: function(event) {
+      if (event.error && event.error.BADJS_EXCUTED) {
+        return;
+      }
+      if (event.type === 'unhandledrejection') {
+        _.BadJs.onError(createError(event.type, event.reason, "", "", "", event.reason));
+      }else{
+        _.BadJs.onError(createError(BADJS_WIN_ERR, event.message, event.filename, event.lineno, event.colno, event.error));
+      }
+    },
+    init: function(uin, mid, view) {
+      this.uin = uin || this.uin;
+      this.mid = mid || this.mid;
+      this.view = view || this.view;
+      return _.BadJs;
+    },
+    //钩子函数
+    hook: function(fn) {
+      this._hookCallback = fn;
+      return _.BadJs;
+    },
+    _send: function(data) {
+      //hack uin mid
+      if (!data.mid) {
+        if (typeof window.PAGE_MID !== 'undefined' && window.PAGE_MID) {
+          data.mid = window.PAGE_MID;
+        } else {
+          return;
+        }
+      }
+      if (!data.uin) {
+        data.uin = window.user_uin || 0;
+      }
+      // 发送要去重 
+      var flag = [data.mid, data.name, data.key].join("|");
+      if (this._cache && this._cache[flag]) {
+        return
+      } else {
+        this._cache && (this._cache[flag] = true);
+        this._xhr(data);
+      }
+      return _.BadJs;
+    },
+    _xhr: function(data) {
+      //console.log(data);
+      var xmlobj;
+      if (window.ActiveXObject) {
+        try {
+          xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+        } catch (e) {
+          try {
+            xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+          } catch (E) {
+            xmlobj = false;
+          }
+        }
+      } else if (window.XMLHttpRequest) {
+        xmlobj = new XMLHttpRequest();
+      }
+      var param = "";
+      for (var key in data) {
+        if (key && data[key]) {
+          param += [key, "=", encodeURIComponent(data[key]), "&"].join("");
+        }
+      }
+      if (xmlobj && typeof xmlobj.open == "function") {
+        xmlobj.open("POST", "https://badjs.weixinbridge.com/report", true);
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        xmlobj.onreadystatechange = function(status) {};
+        xmlobj.send(param.slice(0, -1));
+      } else {
+        var img = new Image();
+        img.src = "https://badjs.weixinbridge.com/report?" + param;
+      }
+    },
+    // key是特征值 默认上报msg就是key，也可以主动传msg包含更多上报信息 
+    report: function(name, key, data) {
+      this.onError(createError(name, key), data);
+      return this;
+    },
+    // 打点标记
+    mark: function(info) {
+      this._info = extend(this._info, info);
+    },
+    nocache: function() {
+      this._cache = false;
+      return _.BadJs;
+    }
+  }
+  function createError(name, msg, url, line, col, error) {
+    return {
+      name: name || "",
+      message: msg || "",
+      file: url || "",
+      line: line || "",
+      col: col || "",
+      stack: (error && error.stack) || "",
+    }
+  }
+  //将异常错误转换成上报协议支持的字段
+  /*
+  * 先取e对象上的file line col等字段
+  * 再解析e.statck
+  * name 错误大类 默认取badjs_try_err|badjs_win_err
+  * key  错误标识 e.message
+  * msg  错误信息 e.message
+  * stack 错误堆栈 e.stack
+  * file 错误发生的文件
+  * line 行
+  * col 列
+  * client_version
+  */
+  function errToData(e) {
+    var _stack = parseStack(e);
+    return {
+      name: e.name,
+      key: e.message,
+      msg: e.message,
+      stack: _stack.info,
+      file: _stack.file,
+      line: _stack.line,
+      col: _stack.col,
+      client_version: "",
+      _info: e._info
+    }
+  }
+  function parseStack(e) {
+    e._info = e._info || ""; // 当前错误的额外信息 最终上报到info
+    var stack = e.stack || "";
+    var _stack = {
+      info: stack,
+      file: e.file || "",
+      line: e.line || "",
+      col: e.col || "",
+    };
+    if (_stack.file == "") {
+      // 提取file line col
+      var stackArr = stack.split(/\bat\b/);
+      if (stackArr && stackArr[1]) {
+        var match = /(https?:\/\/[^\n]+)\:(\d+)\:(\d+)/.exec(stackArr[1]);
+        if (match) {
+          //若stack提取的file line col跟e中的属性不一致，以stack为准 但在e._info中记录原始数据
+          if (match[1] && match[1] != _stack.file) {
+            _stack.file && (e._info += " [file: " + _stack.file + " ]");
+            _stack.file = match[1];
+          }
+          if (match[2] && match[2] != _stack.line) {
+            _stack.line && (e._info += " [line: " + _stack.line + " ]");
+            _stack.line = match[2];
+          }
+          if (match[3] && match[3] != _stack.col) {
+            _stack.col && (e._info += " [col: " + _stack.col + " ]");
+            _stack.col = match[3];
+          }
+        }
+      }
+    }
+    //替换堆栈中的文件路径 combojs太长
+    if (_stack && _stack.file && _stack.file.length > 0) {
+      _stack.info = _stack.info.replace(new RegExp(_stack.file.split("?")[0], "gi"), "__FILE__")
+    }
+    //堆栈路径只保存文件名
+    if (_.BadJs.ignorePath) {
+      _stack.info = _stack.info.replace(/http(s)?\:[^:\n]*\//ig, "").replace(/\n/gi, "");
+    }
+    return _stack;
+  }
+  //兜底方法
+  window.addEventListener && window.addEventListener('error', _.BadJs.winErr);
+  window.addEventListener && window.addEventListener('unhandledrejection', _.BadJs.winErr);
+  return _.BadJs;
+})(WX_BJ_REPORT);
+window.WX_BJ_REPORT = WX_BJ_REPORT;
+/**
+ * 兼容wap项目的简单CMD管理
+ * 所有wap项目必须包含此文件才可以执行成功
+ * 暴露在全局的变量仍然以seajs为命名空间，跟web项目保持一致
+ * 支持的API是seajs.use，以及require define
+ * @author raphealguo
+ * @date 20140326
+ */
+function __moonf__() {
+  if (window.__moonhasinit) return;
+  window.__moonhasinit = true;
+  window.__moonclientlog = []; // moon中存到客户端日志里面的内容，最终写入到客户端的地点在fereport.js
+  if (typeof JSON != "object") { //针对IE7的hack
+    window.JSON = {
+      stringify: function() { return ""; },
+      parse: function() { return {}; }
+    };
+  }
+  var moon_init = function() {
+    // 前端的@cunjinli
+    (function() {
+      // @cunjinli 重写alert函数, moonsafe监控
+      var _alert = window.alert;
+      window.__alertList = [];
+      window.alert = function(msg) {
+        _alert(msg);
+        window.__alertList.push(msg);
+      };
+    })();
+    /**
+     * moonsafe @cunjinli 加在这里
+     */
+    (function() {
+      // if (window.__nonce_str) {
+      //   var __old_createElement = document.createElement;
+      //   document.createElement = function(tagName) {
+      //     var node = __old_createElement.apply(this, arguments);
+      //     if (typeof tagName == 'object') {
+      //       tagName = tagName.toString();
+      //     }
+      //     if (typeof tagName == 'string' && tagName.toLowerCase() == 'script') {
+      //       node.setAttribute("nonce", window.__nonce_str);
+      //     }
+      //     return node;
+      //   }
+      // }
+      if (window.addEventListener && window.__DEBUGINFO && Math.random() < 0.01) {
+        window.addEventListener("load", function() {
+          var node = document.createElement('script');
+          node.src = __DEBUGINFO.safe_js;
+          node.type = 'text/javascript';
+          node.async = true;
+          var head = document.head || (document.getElementsByTagName("head")[0]);
+          head.appendChild(node);
+        });
+      }
+    })();
+    /**
+     * mooncatch
+     * 对各种异步回调都使用try catch错误上报
+     * @radeonwu raphealguo
+     */
+    (function() {
+      var inWx = (/MicroMessenger/i).test(navigator.userAgent);
+      var inMp = (/MPAPP/i).test(navigator.userAgent);
+      var _idkey = 121261; //上报的idkey 添加默认上报值
+      var _startKey; //开始的key
+      var _limit; //上报的key的长度
+      var _badjsId;
+      var _reportOpt; //上报的额外信息
+      var _extInfo; //附加的预留字段，如网络采样率采样率network_rate， 总体上报率rate
+      var MOON_LISTENER_ERROR_KEY_OFFSET = 2; //addEventListener上报时的偏移量为2
+      var MOON_AJAX_NETWORK_OFFSET = 4; //network错误时的上报偏移量为4，这里在ajax.js中上报，这里需要加入采样率
+      var MOON_ASYNC_ERROR_KEY_OFFSET = 9; //setTimeout和setInterval上报时的偏移量为9
+      var MOON_LOCALSTORAGE_ERROR_KEY_OFFSET = 10; //localstorage.setItem失败时的偏移量为10
+      window.__initCatch = function(opt) {
+        _idkey = opt.idkey;
+        _startKey = opt.startKey || 0;
+        _limit = opt.limit;
+        _badjsId = opt.badjsId;
+        _reportOpt = opt.reportOpt || "";
+        _extInfo = opt.extInfo || {};
+        _extInfo.rate = _extInfo.rate || 0.5;
+      }
+      //暴露的上报函数，供core.js和ajax.js上报错误使用，array = [{offset:MOON_JSAPI_KEY_OFFSET, log:"ready", e:e}]
+      window.__moon_report = function(array, rate_opt) {
+        var isAcrossOrigin = false;
+        var href = '';
+        try {
+          href = top.location.href;
+        } catch (e) {
+          isAcrossOrigin = true;
+        }
+        var rate = 0.5;
+        if (!!_extInfo && !!_extInfo.rate) {
+          rate = _extInfo.rate;
+        }
+        if (!!rate_opt && (typeof rate_opt == 'number')) {
+          rate = rate_opt;
+        }
+        if (
+          (!(/mp\.weixin\.qq\.com/).test(location.href) && !(/payapp\.weixin\.qq\.com/).test(location.href)) ||
+          Math.random() > rate ||
+          !(inWx || inMp) ||
+          (top != window && !isAcrossOrigin && !(/mp\.weixin\.qq\.com/).test(href))
+        ) {
+          //return ;
+        }
+        if (isObject(array))
+          array = [array];
+        if (!isArray(array) || _idkey == '')
+          return;
+        var data = "";
+        var log = []; //存放array中每个对象关联的log
+        var key = []; //存放array中每个上报的key
+        var val = []; //存放array中每个上报的value
+        var idkey = [];
+        //如果这里没有opt.limit，直接上报到startKey
+        if (typeof _limit != "number") {
+          _limit = Infinity;
+        }
+        for (var i = 0; i < array.length; i++) {
+          var item = array[i] || {};
+          if (item.offset > _limit) continue; //上报的偏移量超过limit
+          if (typeof item.offset != "number") continue;
+          if (item.offset == MOON_AJAX_NETWORK_OFFSET && !!_extInfo && !!_extInfo.network_rate && Math.random() >= _extInfo.network_rate) {
+            continue;
+          }
+          //log[i] = item.log || "";
+          var k = _limit == Infinity ? _startKey : (_startKey + item.offset);
+          log[i] = (("[moon]" + _idkey + "_" + k + ";") + item.log + ";" + getErrorMessage(item.e || {})) || "";
+          key[i] = k;
+          val[i] = 1;
+        }
+        for (var j = 0; j < key.length; j++) {
+          idkey[j] = _idkey + "_" + key[j] + "_" + val[j];
+          data = data + "&log" + j + "=" + log[j];
+        }
+        if (idkey.length > 0) {
+          // sendReport("idkey=" + idkey.join(";") + "&lc=" + log.length + data);
+          sendReport("POST", location.protocol + '//mp.weixin.qq.com/mp/jsmonitor?', "idkey=" + idkey.join(";") + "&r=" + Math.random() + "&lc=" + log.length + data);
+          // 把图文消息的错误上报一份到badjs，只支持get请求
+          // 这里由于量比较大，把badjs的内层怼爆了，这里加多一个采样，并且去掉用户的信息
+          var rate = 1;
+          if (_extInfo && _extInfo.badjs_rate) { // 初始化时的badjs采样率
+            rate = _extInfo.badjs_rate;
+          }
+          if (Math.random() < rate) {
+            data = data.replace(/uin\:(.)*\|biz\:(.)*\|mid\:(.)*\|idx\:(.)*\|sn\:(.)*\|/, '');
+            if(!!_badjsId){
+              var _img = new Image();
+              var _src = 'https://badjs.weixinbridge.com/badjs?id=' + _badjsId + '&level=4&from=' + encodeURIComponent(location.host) + '&msg=' + encodeURIComponent(data);
+              _img.src = _src.slice(0, 1024);
+            }
+            // badjs同时报一份到新监控 
+            if (typeof WX_BJ_REPORT != "undefined" && WX_BJ_REPORT.BadJs) {
+              for (var i = 0; i < array.length; i++) {
+                var item = array[i] || {};
+                if (item.e) {
+                  WX_BJ_REPORT.BadJs.onError(item.e,{_info:item.log});
+                } else {
+                  var name = /[^:;]*/.exec(item.log)[0];
+                  WX_BJ_REPORT.BadJs.report(name, item.log, { mid: "mmbizwap:Monitor" });
+                }
+              }
+            }
+          } else {
+            //虽然采样没有执行 但实际是有被BadJs.onError，置位一下
+            for (var i = 0; i < array.length; i++) {
+              var item = array[i] || {};
+              if (item.e) {
+                item.e.BADJS_EXCUTED = true;
+              }
+            }
+          }
+        }
+      }
+      function isArray(obj) { //判断输入是否为数组
+        return Object.prototype.toString.call(obj) === '[object Array]';
+      }
+      function isObject(obj) { //判断输入是否为对象
+        return Object.prototype.toString.call(obj) === '[object Object]';
+      }
+      function getErrorMessage(e) {
+        var stack = e.stack + ' ' + e.toString() || ""; //错误堆栈信息
+        try {
+          //先取出res域名
+          if (!window.testenv_reshost) {
+            stack = stack.replace(/http(s)?:\/\/res\.wx\.qq\.com/g, "");
+          } else {
+            var host = 'http(s)?://' + window.testenv_reshost;
+            var reg = new RegExp(host, 'g');
+            stack = stack.replace(reg, "");
+          }
+          //提取最后一个.js前边的
+          var reg = /\/([^.]+)\/js\/(\S+?)\.js(\,|:)?/g;
+          while (reg.test(stack)) {
+            // stack = stack.replace(reg, "3"); 解决$问题
+            stack = stack.replace(reg, function(a, b, c, d, e, f) {
+              return c + d
+            });
+          }
+        } catch (e) {
+          stack = e.stack ? e.stack : "" //错误堆栈信息
+        }
+        var ret = [];
+        for (o in _reportOpt) {
+          if (_reportOpt.hasOwnProperty(o)) {
+            ret.push(o + ":" + _reportOpt[o]);
+          }
+        }
+        ret.push("STK:" + stack.replace(/\n/g, ""));
+        return ret.join("|");
+      }
+      function sendReport(type, url, data) { //post方法用于提交数据
+        if (!/^mp\.weixin\.qq\.com$/.test(location.hostname)) { //非MP域名使用 img方式上报
+          var tmp = [];
+          data = data.replace(location.href, (location.origin || "") + (location.pathname || "")).replace("#wechat_redirect", "").replace("#rd", "").split("&");
+          for (var i = 0, il = data.length; i < il; i++) {
+            var a = data[i].split("=");
+            if (!!a[0] && !!a[1]) {
+              tmp.push(a[0] + "=" + encodeURIComponent(a[1]));
+            }
+          }
+          var _img = new window.Image();
+          _img.src = (url + tmp.join("&")).substr(0, 1024);
+          return;
+        }
+        var xmlobj; //定义XMLHttpRequest对象  
+        if (window.ActiveXObject) { //如果当前浏览器支持Active Xobject，则创建ActiveXObject对象    
+          try {
+            xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+          } catch (e) {
+            try {
+              xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+            } catch (E) {
+              xmlobj = false;
+            }
+          }
+        } else if (window.XMLHttpRequest) { //如果当前浏览器支持XMLHttpRequest，则创建XMLHttpRequest对象  
+          xmlobj = new XMLHttpRequest();
+        }
+        if (!xmlobj) return;
+        //xmlobj.open("POST", location.protocol + "//mp.weixin.qq.com/mp/jsmonitor?", true);         
+        xmlobj.open(type, url, true);
+        xmlobj.setRequestHeader("cache-control", "no-cache");
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"); //设置请求头信息              
+        xmlobj.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+        xmlobj.send(data); //发送数据  
+      }
+      function catTimeout(foo) {
+        return function(cb, timeout) {
+          if (typeof cb === 'string') {
+            try {
+              cb = new Function(cb);
+            } catch (err) {
+              throw err;
+            }
+          }
+          var args = [].slice.call(arguments, 2);
+          var _cb = cb;
+          cb = function() {
+            try {
+              return _cb.apply(this, (args.length && args) || arguments);
+            } catch (error) {
+              if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                console.error("[TryCatch]" + error.stack);
+              }
+              if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                //sendReport(error);
+                window.__moon_report([{ offset: MOON_ASYNC_ERROR_KEY_OFFSET, log: "timeout_error;host:" + location.host, e: error }]);
+                //breakOnError(timeoutkey);
+              }
+              throw error;
+            }
+          }
+          return foo(cb, timeout);
+        };
+      };
+      window.setTimeout = catTimeout(window.setTimeout);
+      window.setInterval = catTimeout(window.setInterval);
+      if (Math.random() < 0.01 && !!window.Document && !!window.HTMLElement) {
+        var cb_map = {};
+        var moon_lid = 0;
+        function catAddListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            var _cb = cb || function() {};
+            cb = function() {
+              try {
+                //arguments[0].currentTarget.setAttribute("data-moon_lid") = moon_lid;
+                //_cb.moon_lid = moon_lid;
+                return _cb.apply(that, arguments);
+              } catch (error) {
+                if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                  console.error("[TryCatch]" + error.stack);
+                }
+                if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                  window.__moon_report([{ offset: MOON_LISTENER_ERROR_KEY_OFFSET, log: "listener_error;type:" + type + ";host:" + location.host, e: error }]);
+                  //breakOnError(timeoutkey);
+                }
+                throw error;
+              }
+            }
+            _cb.moon_lid = moon_lid;
+            cb_map[moon_lid] = cb;
+            moon_lid++;
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        function catRemoveListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            cb = cb_map[cb.moon_lid];
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        Document.prototype.addEventListener = catAddListener(Document.prototype.addEventListener);
+        Document.prototype.removeEventListener = catRemoveListener(Document.prototype.removeEventListener);
+        HTMLElement.prototype.addEventListener = catAddListener(HTMLElement.prototype.addEventListener);
+        HTMLElement.prototype.removeEventListener = catRemoveListener(HTMLElement.prototype.removeEventListener);
+      }
+      //alert("setItem begin");
+      //window.localStorage.setItem = function(){a=c;}//故意
+      var ua = window.navigator.userAgent;
+      if ((/ip(hone|ad|od)/i.test(ua) || /android/i.test(ua)) && !/windows phone/i.test(ua) && !!window.localStorage && !!window.localStorage.setItem) {
+        var _setItem = window.localStorage.setItem;
+        var count = 0;
+        window.localStorage.setItem = function(k, v) {
+          if (count >= 10) { //一直失败 不要再继续试了，可能类似safari无痕模式 不允许写入了
+            return;
+          }
+          try {
+            _setItem.call(window.localStorage, k, v);
+          } catch (error) {
+            //alert(error);
+            if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+              console.error("[TryCatch]" + error.stack);
+            }
+            window.__moon_report([{ offset: MOON_LOCALSTORAGE_ERROR_KEY_OFFSET, log: "localstorage_error;" + error.toString(), e: error }]);
+            count++;
+            if (count >= 3 && !!window.moon && window.moon.clear) {
+              // 可能爆满 清理一下localstorage
+              moon.clear();
+            }
+          }
+        }
+        //alert("setItem end");
+      }
+    })();
+    // 后面的@cunjinli
+  };
+  moon_init();
+  //由于moon异步化，所以有些逻辑需要moon加载完之后才执行的 放到全局callback函数__moon_initcallback里边
+  (!!window.__moon_initcallback) && (window.__moon_initcallback());
+}
+// 为适应inline逻辑，有map时才主动自执行 @zhikaimai
+// if (typeof window.moon_map == 'object') {
+//     __moonf__();
+// }
+__moonf__();
+
+if (!!window.addEventListener){
+  window.addEventListener("load",function(){
+    var MOON_SCRIPT_ERROR_KEY_OFFSET = 1; //script上报时的偏移量为1
+    var ns = document.querySelectorAll("[reportloaderror]");
+    for(var ni=0,nl=ns.length;ni<nl;ni++)
+      ns[ni].onerror=function(ev){
+        window.__moon_report([{ offset: MOON_SCRIPT_ERROR_KEY_OFFSET, log: "load_script_error:" + ev.target.src, e: new Error('LoadResError') }], 1);
+        window.WX_BJ_REPORT.BadJs.report("load_script_error", ev.target.src, { mid: "mmbizwap:Monitor" });
+      };
+  });
+}
+</script>
+
+    <script type="text/javascript" nonce="12821795" reportloaderror>
+  var testRdmUrl = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/common/avatar_default5e513b.svg';
+  // 如果是资源是mp域名，则是rdm环境
+  if (testRdmUrl.indexOf('mp.weixin.qq.com') > 0) {
+    window.__allowLoadResFromMp = true; // 允许从mp.weixin.qq.com加载js资源
+    window.__loadAllResFromMp = true; // 所有js资源都从mp域名加载
+
+    // 给底色加个原谅绿
+    // document.documentElement.style.boxShadow = 'inset 0 0 15px green';
+  }
+</script>
+
+
+    
+
+  
+  <meta name="description" content="" />
+  <meta name="author" content="" />
+
+  
+  <meta property="og:title" content="主播说联播 | 今年端午节，别忽略了这层含义" />
+  <meta property="og:url" content="" />
+  <meta property="og:image" content="http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg" />
+  <meta property="og:description" content="" />
+  <meta property="og:site_name" content="微信公众平台" />
+  <meta property="og:type" content="article" />
+  <meta property="og:article:author" content="" />
+
+  
+  <meta property="twitter:card" content="summary" />
+  <meta property="twitter:image" content="http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg" />
+  <meta property="twitter:title" content="主播说联播 | 今年端午节，别忽略了这层含义" />
+  <meta property="twitter:creator" content="" />
+  <meta property="twitter:site" content="微信公众平台" />
+  <meta property="twitter:description" content="" />
+
+
+    <title>
+</title>
+    
+  
+<script type="module" nonce="12821795" reportloaderror>!function(){try{new Function("m","return import(m)")}catch(o){console.warn("vite: loading legacy build because dynamic import is unsupported, syntax error above should be ignored");var e=document.getElementById("vite-legacy-polyfill"),n=document.createElement("script");n.src=e.src,n.onload=function(){System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))},document.body.appendChild(n)}}();</script>
+<script type="module" crossorigin src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_video.02dfbd18.js" nonce="12821795" reportloaderror></script>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/sprite.e3a96375.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/vendor.714d1b26.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/report.a93d5881.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/loadscript.d630697c.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/controller.ba6bbf1b.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/wxwork_hidden.07e05f17.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/init_ext.48c9cc6e.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/pay_read_utils.50ce59c4.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/modal.879910c9.js" reportloaderror>
+
+
+
+
+
+
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_video.f31dfea7.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/sprite.dcee1002.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/report.301986bf.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/controller.0c48499d.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/wxwork_hidden.00d6a251.css" reportloaderror>
+
+<script type="text/javascript" src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/appmsg/emotion/weemoji5e513c.js" nonce="12821795" reportloaderror></script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+(function(){
+  // 把表情字符串转成图片
+  if (typeof window.__emojiFormat === 'undefined' && window.weEmoji) {
+    var emoji_url = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/common/pic_blank5e513b.gif';
+    var emoji_wx_icon = '<img src="' + emoji_url + '" class="#style#" alt="#name#" />';
+    var dataMap = {};
+    // 创建映射表
+    try {
+      var len = window.weEmoji.EmojiData.length;
+      for(var i = 0, il = len; i < il; i++) {
+        var a = window.weEmoji.EmojiData[i];
+        if(a.cn && !dataMap[a.cn]){
+          dataMap[a.cn] = {
+            index: i
+          };
+        }
+        if(a.hk && !dataMap[a.hk]){
+          dataMap[a.hk] = {
+            index: i
+          };
+        }
+        if(a.us && !dataMap[a.us]){
+          dataMap[a.us] = {
+            index: i
+          };
+        }
+      }
+      // 把表情字符串转成图片
+      window.__emojiFormat = function (text) {
+        if(!/\[[^\[\]]+\]/.test(text)){ //没有表情
+          return text;
+        }
+        return text.replace(/\[[^\[\]]+\]/g, function (match) {
+          if (dataMap[match] && window.weEmoji.EmojiData[dataMap[match].index]) {
+            var data = window.weEmoji.EmojiData[dataMap[match].index];
+            return  emoji_wx_icon.replace("#name#", match).replace("#style#", data.style + ' we-emoji');
+          }
+          return match;
+        });
+      };
+    } catch(e) {
+      // 引入的weemoji对象数据有问题 做个兜底 不做表情处理了
+      window.__emojiFormat = function (text) {
+        return text;
+      }
+    }
+  } else if (typeof window.__emojiFormat === 'undefined') {
+    // 引入的weemoji对象数据有问题 做个兜底 不做表情处理了
+    window.__emojiFormat = function (text) {
+      return text;
+    }
+  }
+})()
+</script>
+
+    
+    <style>
+      .cooldown_tips {
+        margin: 30px auto;
+        margin-top: 0;
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        font-size: 14px;
+        background-color: #f6f7f9;
+        border-radius: 6px;
+      }   
+      .cooldown_tips_icon {
+        display: block;
+        width: 18px;
+        height: 18px;
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+
+  <body id="" class="zh_CN wx_wap_page 
+
+                                            wx_wap_desktop_fontsize_2   page_share_video white_video_page discuss_tab appmsg_skin_default appmsg_style_default">
+    
+    
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.page_begintime = (+new Date());
+</script>
+
+
+    <link rel="dns-prefetch" href="//res.wx.qq.com" reportloaderror>
+<link rel="dns-prefetch" href="//mmbiz.qpic.cn" reportloaderror>
+<link rel="dns-prefetch" href="https://wxa.wxs.qq.com" reportloaderror>
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+String.prototype.html = function (encode) {
+  var replace = ["&#39;", "'", "&quot;", '"', "&nbsp;", " ", "&gt;", ">", "&lt;", "<", "&yen;", "¥", "&amp;", "&"];
+  // 最新版的safari 12有一个BUG，如果使用字面量定义一个数组，var a = [1, 2, 3]
+  // 当调用了 a.reverse() 方法把变量 a 元素顺序反转成 3, 2, 1 后，
+  // 即使此页面刷新了， 或者此页面使用 A标签、 window.open 打开的页面，
+  // 只要调用到同一段代码， 变量 a 的元素顺序都会变成 3, 2, 1
+  // 所以这里不用 reverse 方法
+  /*
+  if (encode) {
+      replace.reverse();
+  }*/
+  var replaceReverse = ["&", "&amp;", "¥", "&yen;", "<", "&lt;", ">", "&gt;", " ", "&nbsp;", '"', "&quot;", "'", "&#39;"];
+  var target;
+  if (encode) {
+    target = replaceReverse;
+  } else {
+    target = replace;
+  }
+  for (var i = 0, str = this; i < target.length; i += 2) {
+    str = str.replace(new RegExp(target[i], 'g'), target[i + 1]);
+  }
+  return str;
+};
+
+window.isInWeixinApp = function () {
+  return /MicroMessenger/.test(navigator.userAgent);
+};
+
+window.getQueryFromURL = function (url) {
+  url = url || 'http://qq.com/s?a=b#rd'; // 做一层保护，保证URL是合法的
+  var tmp = url.split('?'),
+    query = (tmp[1] || "").split('#')[0].split('&'),
+    params = {};
+  for (var i = 0; i < query.length; i++) {
+    var arg = query[i].split('=');
+    params[arg[0]] = arg[1];
+  }
+  if (params['pass_ticket']) {
+    params['pass_ticket'] = encodeURIComponent(params['pass_ticket'].html(false).html(false).replace(/\s/g, "+"));
+  }
+  return params;
+};
+
+(function () {
+  var params = getQueryFromURL(location.href);
+  window.uin = params['uin'] || "" || '';
+  window.key = params['key'] || "" || '';
+  window.wxtoken = params['wxtoken'] || '';
+  window.pass_ticket = params['pass_ticket'] || '';
+  window.appmsg_token = "";
+})();
+</script>
+    
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.write_sceen_time = (+new Date());//页面白屏时间
+</script>
+
+<script type="text/javascript" nonce="12821795" reportloaderror>window.PAGE_MID="mmbizwap:pages/common_share.html"</script>
+
+  
+    <div id="immersive_mask"
+      style="display:none"
+  >
+  
+  <div style="display:none"><img id="js_default_share_cover" src="http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg"/></div>
+  </div>
+
+<div id="js_article" class="page_content page_pages"
+  >
+  <div class="rich_media_area_primary video_channel rich_media_area_primary_full" style="min-height:100vh">
+    <div class="rich_media_area_primary_inner">
+      
+      
+      <div id="js_base_container" class="sub_info_wrp" style="position:relative">
+        <h1 aria-labelledby="js_video_page_title copyright_logo js_a11y_comma publish_time js_a11y_comma js_ip_wording_wrp" class="common_share_title js_video_channel_title" id="js_video_page_title">
+          主播说联播 | 今年端午节，别忽略了这层含义
+        </h1>
+        <div id="h5_profile_btn" class="flex_context account_info">
+          <div class="flex_bd">
+            <div id="profile_share2" class="account_nickname">
+              <span aria-hidden="true" id="copyright_logo" class="account_original account_meta"
+                              >原创</span>
+              <strong role="link" tabindex="0" class="weui-wa-hotarea account_nickname_inner account_meta js_go_profile js_wx_tap_highlight wx_tap_link">新闻联播</strong>
+              <span aria-hidden="true" id="publish_time" class="account_time account_meta"></span>
+              <span aria-hidden="true" id="js_ip_wording_wrp" class="account_time account_meta" style="display: none;">发表于<span id="js_ip_wording" ></span></span>
+            </div>
+          </div>
+        </div>
+        <div class="video_source_link" id="js_ori_status"
+                      style="display:none"
+                  >
+          <div class="video_source_word">以下视频来源于</div>
+          <div class="video_account_info">
+            <img class="video_account_avatar" src="/64"></img>
+            <div class="video_account_name"></div>
+            <i class="video_account_arrow"></i>
+          </div>
+          <div class="video_source_link__layer_mask"></div>
+        </div>
+
+        
+        <div class="js_video_channel_container">
+                      <div id="js_mpvedio" class="mpvideo_wrp" style="position: relative; "></div>
+                  </div>
+      </div>
+
+      <div class="share_mod_context share_global_info js_share_mod_context" id="video_share_global_info">
+        <div id="js_content">
+          
+          
+          <div class="folder_text"
+            style="display:none"          >
+            <p role="option" class="share_notice folder_text_content default animate" lang="en" id="js_common_share_desc"></p>
+            <p aria-hidden="true" class="share_notice folder_text_content" lang="en" id="js_common_share_desc1"
+              style="position: absolute; z-index: -1; visibility: hidden; width: 100%;"></p>
+            <p aria-hidden="true" class="folder_text_switch_wrp synopsis_unfold_button">
+              <span id="js_folder_text_switch" style="display: none;" class="folder_text_switch weui-wa-hotarea">
+                <span>展开</span>
+              </span>
+            </p>
+           <script type="text/javascript" nonce="12821795" reportloaderror>var __INLINE_SCRIPT__=function(){"use strict";var e=function(e,a){function t(e,a){var t=e.match(new RegExp(a+"\\s*=\\s*[\"']?([^\"'\\s>]+)[\"']?"));return t&&t[1]}e=a?window.__emojiFormat(function(e){var a;e=e.split(/(<a\s+\w[^>]*>)(.*?)(<\/a>)/);for(var i=0;i<e.length;i++)if(i%4==1){a=!1;var n=t(e[i],"href");/^https?:\/\/mp\.weixin\.qq\.com/.test(n)&&(a=!0);var s='<a target="_blank" data-href="'+(a?n:"javascript:void 0")+'"',r=t(e[i],"data-miniprogram-appid");if(r)s+=' class="weapp_text_link" data-miniprogram-type="text" data-miniprogram-appid="'+r+'" data-miniprogram-path="'+(t(e[i],"data-miniprogram-path")||"")+'" data-miniprogram-nickname="'+(t(e[i],"data-miniprogram-nickname")||"")+'" data-miniprogram-servicetype="'+(t(e[i],"data-miniprogram-servicetype")||"0")+'"',a=!0;else if(a){s+=' class="js_video_desc_link"';var o=t(e[i],"data-itemshowtype");o&&(s+=' data-itemshowtype="'+o+'"')}e[i]=a?s+">":""}else i%4==3?!a&&(e[i]=""):e[i]=e[i].replace(/<.*?>/g,"");return e.join("")}(e).replace(/\r/g,"").replace(/\n/g,"<br>")):e.replace(/\r/g,"").replace(/\n/g,"<br>").replace(/\s/g,"&nbsp;");var i=document.getElementById("js_common_share_desc"),n=document.getElementById("js_common_share_desc1");i&&n&&(i.innerHTML=e,n.innerHTML=e,i.style.maxHeight="",i.classList?!i.classList.contains("default")&&i.classList.add("default"):i.className.match(/(\s|^)default(\s|$)/)||(i.className+=" default"),setTimeout((function(){var e=document.getElementById("js_folder_text_switch");n.offsetHeight>i.offsetHeight+1?e.style.display="block":e.style.display="none"}),300))};if(!window.__second_open__){var a="";e(a,!0),window.__setDesc=e}return e}();</script>
+          </div>
+        </div>
+      </div>
+      
+      <div id="video_bottom_area"></div>
+    </div>
+  </div>
+  <div class="rich_media_area_extra" style="display:none">
+    <div class="rich_media_area_extra_inner" id="video_ad_comment">
+      
+      <div class="wx_follow_container" id="js_like_profile_container"></div>
+      
+      <div id="page_bottom_area"></div>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.first_sceen__time = (+new Date());//页面首屏时间
+</script>
+
+
+<div class="comment_primary_emotion_panel_wrp" id="js_emotion_panel_pc" style="display: none">
+  <div class="comment_primary_emotion_panel">
+    <ul class="comment_primary_emotion_list_pc" id="js_emotion_list_pc">
+    </ul>
+  </div>
+</div>
+
+
+<div class="weui-dialog__wrp" id="js_alert_panel" style="display:none;">
+  <div class="weui-mask"></div>
+  <div class="weui-dialog">
+    <div class="weui-dialog__bd" id="js_alert_content"></div>
+    <div class="weui-dialog__ft">
+      <a href="javascript:;" class="weui-dialog__btn weui-dialog__btn_default" id="js_alert_confirm">知道了</a>
+    </div>
+  </div>
+</div>
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+  window.img_popup = 1; // 全量小程序弹窗
+</script>
+
+
+<div id="js_pc_weapp_code" class="weui-desktop-popover weui-desktop-popover_pos-up-center weui-desktop-popover_img-text" style="display: none;">
+  <div class="weui-desktop-popover__content">
+      <div class="weui-desktop-popover__desc">
+          <img id="js_pc_weapp_code_img">
+          微信扫一扫<br>使用小程序<span id="js_pc_weapp_code_des"></span>
+      </div>
+  </div>
+</div>
+<div id="js_minipro_dialog" role="dialog" aria-modal="true" tabindex="0" aria-labelledby="js_minipro_dialog_head" style="display:none;">
+  <div class="weui-mask"></div>
+  <div class="weui-dialog weui-dialog_link">
+      <div class="weui-dialog__hd">
+          <strong class="weui-dialog__title" id="js_minipro_dialog_head" tabindex="0"></strong>
+      </div>
+      <div class="weui-dialog__bd" id="js_minipro_dialog_body"></div>
+      
+      <div class="weui-dialog__ft">
+          <a role="button" id="js_minipro_dialog_cancel" href="javascript:void(0);" class="weui-dialog__btn weui-dialog__btn_default">取消</a>
+          <a role="button" id="js_minipro_dialog_ok" href="javascript:void(0);" class="weui-dialog__btn weui-dialog__btn_primary">允许</a>
+      </div>
+  </div>
+</div>
+<div id="js_link_dialog" role="dialog" aria-modal="true" tabindex="0" aria-labelledby="js_link_dialog_body" style="display:none;">
+  <div class="weui-mask"></div>
+  <div class="weui-dialog weui-dialog_link">
+    <div class="weui-dialog__hd">
+      <strong class="weui-dialog__title" id="js_link_dialog_head" tabindex="0"></strong>
+    </div>
+    <div class="weui-dialog__bd" id="js_link_dialog_body" tabindex="0"></div>
+    
+    <div class="weui-dialog__ft">
+      <a role="button" id="js_link_dialog_cancel" href="javascript:void(0);" class="weui-dialog__btn weui-dialog__btn_default">取消</a>
+      <a role="button" id="js_link_dialog_ok" href="javascript:void(0);" class="weui-dialog__btn weui-dialog__btn_primary">允许</a>
+    </div>
+  </div>
+</div>
+
+
+
+    <script type="text/javascript" nonce="12821795" reportloaderror>
+window.logs.pagetime.page_begin = Date.now();
+</script>
+    <script type="text/javascript" nonce="12821795" reportloaderror>
+var __DEBUGINFO = {
+  debug_js: "//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/biz_wap/debug/console5e513c.js",
+  safe_js: "//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/biz_wap/safe/moonsafe5e513c.js",
+  res_list: []
+};
+</script>
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+(function () {
+  var totalCount = 0,
+    finishCount = 0;
+
+  function _loadVConsolePlugin() {
+    window.vConsole = new window.VConsole();
+    while (window.vConsolePlugins.length > 0) {
+      var p = window.vConsolePlugins.shift();
+      window.vConsole.addPlugin(p);
+    }
+    // 视频落地页h5有时候不会触发onload事件，导致vConsole无法渲染，这里手动强制渲染vConsole @baakqiu
+    if (!window.vConsole.isInited) {
+      window.vConsole._render();
+      window.vConsole._mockTap();
+      window.vConsole._bindEvent();
+      window.vConsole._autoRun();
+    }
+  }
+
+  function _addVConsole(uri, cb) {
+    totalCount++;
+    var node = document.createElement('SCRIPT');
+    node.type = 'text/javascript';
+    node.src = uri;
+    node.setAttribute('nonce', '12821795');
+    if (cb) {
+      node.onload = cb;
+    }
+    document.getElementsByTagName('head')[0].appendChild(node);
+  }
+  if (
+    (document.cookie && document.cookie.indexOf('vconsole_open=1') > -1)
+    || location.href.indexOf('vconsole=1') > -1
+  ) {
+    window.vConsolePlugins = [];
+    _addVConsole('//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/vconsole/3.2.2/vconsole.min5e513b.js', function () {
+      // _addVConsole('plugin/vconsole-sources/1.0.1/vconsole-sources.min.js');
+      _addVConsole('//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/vconsole/plugin/vconsole-mpopt/1.0.1/vconsole-mpopt5e513b.js', _loadVConsolePlugin);
+    });
+  }
+
+  // // 广告iframe预加载
+  try {
+    var adIframeUrl = localStorage.getItem('__WXLS_ad_iframe_url');
+    if (window === top) {
+      if (adIframeUrl) {
+        if (navigator.userAgent.indexOf('iPhone') > -1) {
+          var img = new Image();
+          img.src = adIframeUrl;
+        } else {
+          var link = document.createElement('link');
+          link.rel = 'prefetch';
+          link.href = adIframeUrl;
+          document.getElementsByTagName('head')[0].appendChild(link);
+        }
+      }
+    }
+  } catch (err) {
+
+  }
+
+})();
+</script>
+    
+    
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+  // item_show_type映射表
+  window.ITEM_SHOW_TYPE_MAP = {
+    APP_MSG_PAGE: '0',      // 图文页
+    VIDEO_SHARE_PAGE: '5',  // 视频分享页
+    MUSIC_SHARE_PAGE: '6',  // 音乐分享页
+    AUDIO_SHARE_PAGE: '7',  // 语音分享页
+    IMG_SHARE_PAGE: '8',    // 图片分享页
+    TEXT_SHARE_PAGE: '10',  // 文字分享页
+    SHORT_CONTENT_PAGE: '17', // 短内容分享页
+  };
+  window.new_appmsg = 1;
+  window.is_login = '0' * 1;
+  window.devicetype = '';
+  window.abtest_cookie = '';
+  window.idx = '' || '' || '1';
+  window.biz = '' || 'MzIxNzU1NTQwNQ==';
+  window.item_show_type = '5' || '';
+  window.real_item_show_type = '5' || '';
+  window.mid = '' || '' || '2247614205';
+  window.source = '';
+  window.subscene = '';
+  window.sn = '' || '' || '';
+  window.ct = '1654268371' || '';
+  window.msg_title = '主播说联播 | 今年端午节，别忽略了这层含义' || '';
+  window.appmsg_type = '9' || '';
+  window.clientversion = '';
+  window.send_time = '' || '';
+  window.msg_daily_idx = '1' || '' || '';
+  window.is_temp_url = '' ? 1 : 0;
+  window.appmsgid = '' || '' || '2247614205';
+  window.LANG = 'zh_CN';
+  window.user_uin = ('0' || '') * 1;
+  window.defaultAvatarUrl = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/common/avatar_default5e513b.svg';
+  window.weapp_sn_arr_json = "" || "";
+  window.appid_list = ""; // 该页面所在的小程序的appid列表，只在小程序中使用
+  window.enterid = '' * 1 || '' * 1 || parseInt(Date.now() / 1000, 10);
+  window.sessionid = '' || 'svr_b73be714f1b';
+  window.isDetail = '' * 1;
+  </script>
+<script type="text/javascript" nonce="12821795" reportloaderror>var __INLINE_SCRIPT__=function(){"use strict";var e=function(e,n){if(e.indexOf("——")>-1){e=e.replace(/——/g,'<span style="letter-spacing:normal">——</span>')}n&&(n.innerHTML=e)};if(!window.__second_open__){e("主播说联播 | 今年端午节，别忽略了这层含义",document.getElementById("activity-name")),window.__setTitle=e}return e}();</script><script type="text/javascript" nonce="12821795" reportloaderror>var __INLINE_SCRIPT__=function(){"use strict";var e=function(e,t,n,i){var _=new Date(1e3*(1*t)),o=function(e){return"0".concat(e).slice(-2)},r=_.getFullYear()+"-"+o(_.getMonth()+1)+"-"+o(_.getDate())+" "+o(_.getHours())+":"+o(_.getMinutes());i&&(i.innerText=r)};if(!window.__second_open__){e(0,"1654268371",0,document.getElementById("publish_time")),window.__setPubTime=e}return e}();</script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.__createXmlGetter = function genGlobalDataGetters(xml, params) {
+  return function getXmlValue(path) {
+    var isParam = true;
+    if (path.slice(-5) === '.DATA') {
+      path = path.slice(0, -5);
+      isParam = false;
+    }
+    if (isParam) { if (!params || typeof params !== 'object') return ''; }
+    else if (!xml || typeof xml !== 'object') return '';
+    for (var v = isParam ? params : xml, i = 0, p = path.split('.'); i < p.length; i++) {
+      v = v[p[i]];
+      if (v == null) { // null或者undefined
+        return '';
+      }
+    }
+    if (typeof v === 'object') {
+      return v;
+    }
+    return v + '';
+  };
+}
+</script>
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.__getVideoRadio = function __getVideoRadio(videoInfo) {
+  var radio;
+  var height = Number(videoInfo.height);
+  var width = Number(videoInfo.width);
+  var videoRadio = (width / height).toFixed(2);
+  window.videoChannelRation = height / width;
+  if (Math.abs(1.33 - videoRadio) < Math.abs(1.77 - videoRadio)) {
+    radio = 4 / 3;
+  } else {
+    radio = 16 / 9;
+  }
+  return radio;
+}
+
+window.__calculateRadio = function __calculateRadio(_mpVideoTransInfo, _txVideoInfo, _isMpVideo) {
+  var mp_video_trans_info = _mpVideoTransInfo || [
+                {
+        format_id:  '10002',
+        width: '1080',
+        height: '1920',
+        duration: '107.008',
+        filesize: '21820320'
+      },
+            {
+        format_id:  '10003',
+        width: '480',
+        height: '854',
+        duration: '107.008',
+        filesize: '7206072'
+      },
+            {
+        format_id:  '10004',
+        width: '480',
+        height: '854',
+        duration: '107.008',
+        filesize: '4547069'
+      },
+            {
+        format_id:  '20003',
+        width: '480',
+        height: '854',
+        duration: '107',
+        filesize: '7143737'
+      },
+            ];
+
+  var txVideoInfo = _txVideoInfo || {
+                };
+
+  var isMpVideo = _isMpVideo || '1' * 1;
+  function findItemByFormatId(list, format_id) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].format_id == format_id) {
+        return list[i];
+      }
+    }
+    return null;
+  }
+
+  var firstChooseRadio = findItemByFormatId(mp_video_trans_info, '10002');
+  var secondChooseRadio = findItemByFormatId(mp_video_trans_info, '10003');
+  var thirdChooseRadio = findItemByFormatId(mp_video_trans_info, '10004');
+  if (firstChooseRadio) {
+    return {
+      ratio: window.__getVideoRadio(firstChooseRadio),
+      duration: firstChooseRadio.duration,
+      videoWidth: firstChooseRadio.width,
+      videoHeight: firstChooseRadio.height
+    };
+  }
+  if (secondChooseRadio) {
+    return {
+      ratio: window.__getVideoRadio(secondChooseRadio),
+      duration: secondChooseRadio.duration,
+      videoWidth: secondChooseRadio.width,
+      videoHeight: secondChooseRadio.height
+    };
+  }
+  if (thirdChooseRadio) {
+    return {
+      ratio: window.__getVideoRadio(thirdChooseRadio),
+      duration: thirdChooseRadio.duration,
+      videoWidth: thirdChooseRadio.width,
+      videoHeight: thirdChooseRadio.height
+    };
+  }
+  //最终默认16/9
+  window.videoChannelRation = 9 / 16;
+  return {
+    ratio: 16 / 9,
+    duration: 0,
+    videoWidth: 0,
+    videoHeight: 0
+  };
+}
+
+window.__setVideoSize = function __setVideoSize(containerId, cdn_url) {
+  var container = document.getElementById(containerId);
+  // var w = container.offsetWidth;
+  // 注意：如果设计有改动，秒开也需要改动 为什么不用上面那种方法，因为渲染慢的还是没有渲染出dom 计算不出来
+  var w = Math.min(window.orientation ? window.innerHeight : window.innerWidth, 677);
+  var top = container.offsetTop;
+
+  var minHeight =  w * 9 / 16;
+  // var maxHeight = window.screen.height * 0.45;
+  var maxHeight = w * 4 / 3;
+  var h = w * window.videoChannelRation;
+  var immersive = location.href.indexOf('item_show_type=16') !== -1;
+
+  if (!immersive) {
+    if (h < minHeight) {
+      h = minHeight
+    }
+    if (h > maxHeight) { // max计算要在min后面，不然兜不住max<min的情况
+      h = maxHeight;
+    }
+    if (Math.abs(h - minHeight) < 10) {
+      h = minHeight;
+    }
+  }
+
+  var finalHeight = Math.round(h);
+  window.__nativeHeight__= finalHeight;
+  window.__minHeight= Math.floor(w * 9 / 16);
+
+  var backgroundSize = '';
+  if (window.videoChannelRation > 1) {
+    backgroundSize = 'contain';
+  } else {
+    backgroundSize = 'cover';
+  }
+  if (!immersive) {
+    container.style.cssText += 'height: ' + finalHeight + 'px; width: ' + w + 'px; background: url(' + cdn_url + ') no-repeat center black; background-size: ' + backgroundSize + '; margin: 0 auto;';
+  }
+}
+</script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+if (!window.__second_open__) {
+  (function () {
+    window.__videoInfo = window.__calculateRadio();
+    window.__videoDefaultRatio = window.__videoInfo.ratio;
+    var ua = window.navigator.userAgent;
+    if (ua.match(/android\s[\d\.]+/i) || ua.match(/iphone\sos\s[\d_]+/i)) {
+      var env = window.__wxWebEnv && typeof window.__wxWebEnv.getEnv === 'function' && window.__wxWebEnv.getEnv();
+      if (env && typeof env === 'string') try { env = JSON.parse(env) } catch (err) { env = {} } else env = {};
+      setTimeout(function() { console.info('[H5 GetEnv]', env) }, 3000);
+      if (env.immersiveMode) {
+        window.weixinPostMessageHandlers && window.weixinPostMessageHandlers.monitorHandler.postMessage(JSON.stringify({ event: 'stopImmersiveLoading' }));
+      } else if (location.href.indexOf('item_show_type=16') !== -1) {
+        window.addEventListener('pageshow', function (e) { e.persisted && location.reload() });
+        location.replace(location.href.replace('item_show_type=16', 'fallback_from_env=' + JSON.stringify(env)).replace(/#.*$/, '#wechat_redirect')); // 如果不是沉浸式进来，直接干掉item_show_type重刷
+      }
+      window.__setVideoSize('js_mpvedio', 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg');
+    } else if (location.href.indexOf('item_show_type=16') !== -1) {
+      location.replace(location.href.replace('item_show_type=16', 'fallback_from_env=not_support')); // 如果不是手机上，直接干掉item_show_type重刷
+    } else {
+      var container = document.getElementById('js_mpvedio');
+      var w = container.offsetWidth;
+      var ratio = window.__videoDefaultRatio;
+      var h = w / ratio;
+      container.style.height = h + 'px';
+    }
+  })();
+}
+</script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+window.__initGlobalData = function __initGlobalData(xml, params) {
+  var getXmlValue = window.__createXmlGetter(xml, params);
+
+  if (!!window.__initCatch) {
+    window.__initCatch({
+      idkey: 64469,
+      startKey: 0,
+      limit: 10,
+      reportOpt : {
+        vid: xml ? getXmlValue('video_page_info.video_id.DATA') : 'wxv_2427192952566693889',
+        uin: xml ? getXmlValue('video_page_info.user_uin.DATA') : '',
+        biz: xml ? getXmlValue('__biz') : '',
+        mid: xml ? getXmlValue('mid') : '',
+        idx: xml ? getXmlValue('idx') : '',
+        sn: xml ? getXmlValue('sn') : ''
+      }
+    });
+  }
+  //评论数据上报
+  window.pageCommentReportData = {
+    scene: 1, // 视频分享页
+    idkey: 64469,
+    moreList: 11, // 加载第二页或以上的留言列表次数
+    errList: 12, // 加载评论列表失败
+    addCommentErr: 13, // 发表评论失败
+    errComment: 14  //加载我的评论失败
+  };
+
+  // 沉浸式播放器模式
+  window.immersiveMode = (xml ? getXmlValue('item_show_type') : '') === '16';
+
+  // 给body 动态添加白底
+  window.isFromVideoChannel = xml ? getXmlValue('is_from_video_channel.DATA') * 1 : '' * 1;
+
+  window.__appmsgCgiData = {
+    // 是否使用广告
+    can_use_page: xml ? getXmlValue('can_use_page.DATA') * 1 || 0 : '0' * 1 || 0,
+    copyright_stat: xml ? getXmlValue('copyright_info.copyright_stat.DATA') * 1 : '0' * 1,
+    need_pay: xml ? getXmlValue('payforread_info.need_pay.DATA') * 1 : '' * 1,
+  };
+  window.is_login = xml ? getXmlValue('is_login.DATA') * 1 : '0' * 1;
+  window.user_uin = xml ? getXmlValue('video_page_info.user_uin.DATA') : ''; // 用户UIN，用于客户端proxy和上报
+  window.cgiData = {
+    item_show_type: xml ? getXmlValue('real_item_show_type.DATA') : '5',
+    msg_title: xml ? getXmlValue('title.DATA') : '主播说联播&nbsp;|&nbsp;今年端午节，别忽略了这层含义',
+    tempkey: xml ? getXmlValue('tempkey') : '', // 预览链接带的
+    scene: xml ? getXmlValue('scene') : '',
+    subscene: xml ? getXmlValue('subscene') : '',
+    channel_session_id: xml ? getXmlValue('channel_session_id') : '',
+    is_top_stories: xml ? getXmlValue('is_top_stories.DATA') * 1 : '0' * 1, // 1：保存后公开生成的落地页
+    cdn_url: xml ? getXmlValue('cdn_url.DATA') : 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg', // 封面图
+    cdn_url_1_1: xml ? getXmlValue('cdn_url_1_1.DATA') : 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2gFkkRxhjcg2hqtD2RvLK1qOIL4aRXzeBqMgEPO2IPw5vd8JicdYWdZw/0?wx_fmt=jpeg', // 封面1:1图
+    cdn_url_16_9: xml ? getXmlValue('cdn_url_16_9.DATA') : 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2VOsR1ulOJYXsfyyNgFdBmll5HQWyjswP9P9RWJughXCuicPDHfVrVXg/0?wx_fmt=jpeg', // 封面1:1图
+    video_title: xml ? getXmlValue('title.DATA') : '主播说联播 | 今年端午节，别忽略了这层含义', // 视频title，用于上报
+    tag: xml ? getXmlValue('tag.DATA') * 1 : '' * 1, // 兼容旧版  0: 详情页（需要显示分享XX）1:分享页（不需要显示分享XXX）
+    vidsn: xml ? getXmlValue('vidsn') : '', // 详情页才有
+    pass_ticket: xml ? getXmlValue('pass_ticket') : '', // 用于上报
+    appImg: '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/pages/video/pic_v.2x5e513b.png', // 腾讯视频logo，用于播放器显示
+    video_source_type:
+      xml ? (
+        getXmlValue('video_page_info.source_bizuin.DATA') === '0' || getXmlValue('video_page_info.source_bizuin.DATA') === '' ? (// 没有视频上传者
+          getXmlValue('video_page_info.source_link.DATA') ? // 有腾讯视频页面链接
+          3 : // 来源腾讯视频
+          0 // 未知
+        ) : (
+          getXmlValue('video_page_info.source_bizuin.DATA') !== '0' && getXmlValue('video_page_info.source_bizuin.DATA') !== '' && getXmlValue('__biz') === getXmlValue('video_page_info.source_bizuin.DATA') ? // 有上传者，且和当前公众号相同
+          1 : // 不显示来源
+          2 // 来源公众号
+        )
+      ) : (
+                2 // 来源公众号
+              ),
+    desc: xml ? getXmlValue('desc.DATA') : '',
+    content_noencode: xml ? getXmlValue('video_page_info.content_noencode.DATA') : '',
+    hit_bizuin: xml ? getXmlValue('video_page_info.hit_bizuin.DATA') : '3217555405', // 转载视频时(包括撞原创库转载和贴链接不撞库的转载)，被撞库的原创视频bizuin
+    hit_username: xml ? getXmlValue('video_page_info.hit_username.DATA') : '',
+    hit_vid: xml ? getXmlValue('video_page_info.hit_vid.DATA') : '', // 转载视频时(只包括撞原创库转载)，被撞库的原创视频vid
+    hit_biz_headimg: xml ? getXmlValue('video_page_info.hit_biz_headimg.DATA') : '',
+    hit_nickname: xml ? getXmlValue('video_page_info.hit_nickname.DATA') : '',
+    is_mp_video: xml ? getXmlValue('video_page_info.is_mp_video.DATA') * 1 : '1' * 1, // 视频是否MP源
+    txvideo_vid: xml ? getXmlValue('video_page_info.txvideo_vid.DATA') : '', // MP视频撞到旧视频原创库，vid使用原创的vid来替换
+    openid: xml ? getXmlValue('video_page_info.openid.DATA') : 'oDdoCt4qgb-hTWM-kY6p615m67QI', // 这是广电通的生成的
+    txvideo_openid: xml ? getXmlValue('video_page_info.txvideo_openid.DATA') : '', // 这是腾讯视频的生成的
+    ckey: xml ? getXmlValue('video_page_info.ckey.DATA') : '',
+    ori_status: xml ? getXmlValue('video_page_info.ori_status.DATA') : '1', // 视频和当前公众号的原创关系，1：原创 2：转载(包括撞原创库转载和贴链接不撞库的转载) 其他：普通
+    source_link: xml ? getXmlValue('video_page_info.source_link.DATA') : '', // 如果视频来源腾讯视频，则有一个视频来源链接
+    not_show_banner: xml ? getXmlValue('video_page_info.not_show_banner.DATA') * 1 : '' * 1, // 是否是预览链接 1为否 0为是
+    album_id: xml ? getXmlValue('appmsgalbuminfo.album_id.DATA') : '1712550609263919107',
+    album_title: xml ? getXmlValue('appmsgalbuminfo.title.DATA') : '主播说联播',
+    albumLink: xml ? getXmlValue('appmsgalbuminfo.link.DATA').html() : 'https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzIxNzU1NTQwNQ==\x26amp;action=getalbum\x26amp;album_id=1712550609263919107#wechat_redirect'.html(),
+    albumContentSize: xml ? getXmlValue('appmsgalbuminfo.content_size.DATA') * 1 : '470' * 1, // 视频总数
+    can_reward: xml ? getXmlValue('can_reward.DATA') * 1 || 0 : '0' * 1 || 0,
+    reward_money: xml ? getXmlValue('reward_money.DATA') * 1 || 0 : '' * 1 || 0,
+    reward_wording: xml ? getXmlValue('reward_wording.DATA') : ''
+  };
+  window.cgiData.radio = window.__videoDefaultRatio;
+  window.cgiData.vid = xml ? getXmlValue('video_page_info.video_id.DATA') : 'wxv_2427192952566693889';
+  window.clientversion = xml ? getXmlValue('version') : '';
+  // 话题
+  if (!xml) {
+        window.cgiData.topics = [
+            {
+        tag_name: '主播说联播',
+        tag_link: 'https://mp.weixin.qq.com/mp/appmsgalbum?__biz=MzIxNzU1NTQwNQ==\x26amp;action=getalbum\x26amp;album_id=1712550609263919107#wechat_redirect',
+        tag_content_num: '470' * 1 || 0,
+        album_id: '1712550609263919107'
+      },
+          ];
+      } else {
+    window.cgiData.topics = getXmlValue('public_tag_info.tags.DATA') || [];
+  }
+  // 视频分享页无贴片广告
+  window.no_vedio_ad = 1;
+  window.new_appmsg = 1;
+
+  var PUBLIC_FLAG = {
+    PRIVATE: 0,
+    TL: 1,
+    MPVIDEO: 2
+  };
+  var publicSceneMap = {
+    '138': PUBLIC_FLAG.TL,
+    '147': PUBLIC_FLAG.MPVIDEO,
+    '148': PUBLIC_FLAG.MPVIDEO,
+    '157': PUBLIC_FLAG.TL,
+    '169': PUBLIC_FLAG.TL,
+    '186': PUBLIC_FLAG.TL
+  };
+  if (xml ? getXmlValue('related_video_source') : '') {
+    // 个位控制公私域，其中0是私域，1和2是公域(不同场景)
+    // 十位声明跳转来源，其中1*是观看更多跳转、2*是连播跳转
+    // 比如12就是公域观看更多跳转过来、20就是私域连播跳转过来
+    window.cgiData.related_video_source = xml ? getXmlValue('related_video_source') * 1 : '' * 1;
+  } else if ((xml ? getXmlValue('exptype') : '') === 'timeline_feeds_longvideoexp_mpvid') {
+    // 接入看一看策略的实验，默认公域
+    window.cgiData.related_video_source = PUBLIC_FLAG.TL;
+  } else {
+    window.cgiData.related_video_source = publicSceneMap[xml ? getXmlValue('scene') : ''] || PUBLIC_FLAG.PRIVATE;
+  }
+
+  if (!xml) {
+            window.__mpVideoCoverUrl = 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg';
+    window.__mpVideoTransInfo = [
+            {
+        duration_ms: '107008' * 1 || 0,
+        filesize: '21820320' * 1 || 0,
+        format_id: '10002' * 1 || 0,
+        height: '1920' * 1 || 0,
+        url: 'http://mpvideo.qpic.cn/0bc33yaciaaapmadkuu2qbrfbxwdetpaajaa.f10002.mp4?dis_k=406dc73bacbe6c4ca3fa93ee6f0daf57\x26amp;dis_t=1654276285',
+        video_quality_level: '3' * 1 || 0,
+        video_quality_wording: '超清',
+        width: '1080' * 1 || 0
+      },
+            {
+        duration_ms: '107008' * 1 || 0,
+        filesize: '7206072' * 1 || 0,
+        format_id: '10003' * 1 || 0,
+        height: '854' * 1 || 0,
+        url: 'http://mpvideo.qpic.cn/0bc33yaciaaapmadkuu2qbrfbxwdetpaajaa.f10003.mp4?dis_k=201c8c0c5071e1917a1115b5e17eac16\x26amp;dis_t=1654276285',
+        video_quality_level: '2' * 1 || 0,
+        video_quality_wording: '高清',
+        width: '480' * 1 || 0
+      },
+            {
+        duration_ms: '107008' * 1 || 0,
+        filesize: '4547069' * 1 || 0,
+        format_id: '10004' * 1 || 0,
+        height: '854' * 1 || 0,
+        url: 'http://mpvideo.qpic.cn/0bc33yaciaaapmadkuu2qbrfbxwdetpaajaa.f10004.mp4?dis_k=0dd1411e5de6f877094ca0288cca6391\x26amp;dis_t=1654276285',
+        video_quality_level: '1' * 1 || 0,
+        video_quality_wording: '流畅',
+        width: '480' * 1 || 0
+      },
+            {
+        duration_ms: '107000' * 1 || 0,
+        filesize: '7143737' * 1 || 0,
+        format_id: '20003' * 1 || 0,
+        height: '854' * 1 || 0,
+        url: 'http://mp.weixin.qq.com/mp/hlsplayurl/masterplaylist/wxv_2427192952566693889.m3u8',
+        video_quality_level: '4' * 1 || 0,
+        video_quality_wording: '自动',
+        width: '480' * 1 || 0
+      },
+          ];
+          } else if (
+    getXmlValue('video_page_info.is_mp_video_delete.DATA') === '1' ||
+    getXmlValue('video_page_info.is_mp_video_forbid.DATA') === '1' ||
+    getXmlValue('video_page_info.is_mp_video_transing.DATA') === '1' ||
+    getXmlValue('video_page_info.is_mp_video_checking.DATA') === '1' ||
+    getXmlValue('video_page_info.is_mp_video_check_fail.DATA') === '1' ||
+    getXmlValue('video_page_info.is_appmsg_unauthorized.DATA') === '1'
+  ) {
+    window.localStorage && window.localStorage.removeItem && window.localStorage.removeItem('qqmovieStatus_' + getXmlValue('video_page_info.video_id.DATA'));
+  } else {
+    window.__mpVideoTransInfo = getXmlValue('video_page_info.mp_video_trans_info.DATA') || [];
+    window.__mpVideoCoverUrl = getXmlValue('video_page_info.cover_url.DATA') || '';
+  }
+  if (window.__mpVideoTransInfo && (!window.__mpVideoTransInfo.length || !window.__mpVideoTransInfo[0].url)) {
+    delete window.__mpVideoTransInfo;
+  }
+
+  window.channel_session_id = xml ? getXmlValue('channel_session_id') : '';
+  window.title = xml ? getXmlValue('title.DATA') : '主播说联播&nbsp;|&nbsp;今年端午节，别忽略了这层含义';
+  window.related_video_sn = xml ? getXmlValue('related_video_sn.DATA') : ''; // 视频落地页拉取相关视频需要
+  window.enterid = xml ? getXmlValue('enterid') * 1 || parseInt(Date.now() / 1000) : '' * 1 || parseInt(Date.now() / 1000);
+  window.sessionid = xml ? getXmlValue('sessionid') || getXmlValue('base_resp.base_resp.sessionid.DATA') : '' || 'svr_b73be714f1b';
+  window.reloadid = xml ? getXmlValue('reloadid') * 1 || parseInt(Date.now() / 1000) : '' * 1 || parseInt(Date.now() / 1000); // 视频落地页连续播放id
+  window.reloadseq = xml ? getXmlValue('reloadseq') * 1 || 1 : '' * 1 || 1; // 连续播放序号
+  window.continueid = xml ? getXmlValue('continueid') * 1 || parseInt(Date.now() / 1000) : '' * 1 || parseInt(Date.now() / 1000); // 视频落地页自动连播id
+  window.continueseq = xml ? getXmlValue('continueseq') * 1 || 1 : '' * 1 || 1; // 视频落地页连播序号
+  window.source = xml ? getXmlValue('scene') || '1' : '' || '1';
+  window.subscene = xml ? getXmlValue('subscene') : '';
+  window.enter_time = Date.now();
+  window.exptype = xml ? getXmlValue('exptype') : '';
+  window.expsessionid = xml ? getXmlValue('expsessionid') : '';
+  window.is_temp_url = xml ? getXmlValue('tempkey') : '';
+  window.appmsg_like_type = xml ? getXmlValue('appmsg_like_type.DATA') * 1 || 1 : '2' * 1 || 1;
+  window.passparam = xml ? getXmlValue('passparam') : '';
+  window.copyright_stat = xml ? getXmlValue('copyright_info.copyright_stat.DATA') * 1 : '0' * 1;
+  window.need_pay = xml ? getXmlValue('payforread_info.need_pay.DATA') * 1 : '' * 1;
+  window.is_pay_subscribe = xml ? getXmlValue('is_pay_subscribe.DATA') * 1 : '0' * 1;
+  window.msg_title = xml ? getXmlValue('title.DATA') : '主播说联播&nbsp;|&nbsp;今年端午节，别忽略了这层含义';
+  window.msg_desc = xml ? getXmlValue('desc.DATA') : '';
+  window.ct = xml ? getXmlValue('ori_create_time.DATA') || getXmlValue('ct') : '1654268371' || '';
+  window.ori_send_time = xml ? getXmlValue('ori_send_time.DATA') : '1654268371';
+  window.msg_link = xml ? getXmlValue('link.DATA') : '';
+  window.is_teenager = xml ? getXmlValue('user_info.is_teenager.DATA') * 1 || 0 : '' * 1 || 0; // 是否处于青少年模式
+  window.is_care_mode = xml ? getXmlValue('user_info.is_care_mode.DATA') * 1 || 0 : '' * 1 || 0; // 是否处于关怀模式
+  window.round_head_img = xml ? getXmlValue('round_head_img.DATA') : 'http://mmbiz.qpic.cn/mmbiz_png/QFoLZf9dncvsTfRW4Y8U7SXLmfxmHWP7Ppx0dgECgqcE4ZhnW3NTicn7ictTOEy18RUk2EOERLfmqJ2dXtZV8Aiag/0?wx_fmt=png';
+  window.kanyikan_video_educate_pic = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/appmsg/pic_like_comment_primary5e513b.png';
+  window.kanyikan_educate_pic = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/appmsg/pic_like_comment5e513b.png';
+  // 留言相关
+  window.goContentId = xml ? getXmlValue('contentid') : '';
+  window.goReplyId = xml ? getXmlValue('replyid') : '';
+  // 沉浸式播放器，判断是否付费文章
+  window.isPaySubscribe = xml ? getXmlValue('is_pay_subscribe') * 1 : '0' * 1; // 是否付费文章
+};
+window.__initGlobalData();
+</script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+//定义 window.cgiData 相关变量
+window.__initCgiDataConfig = function __initGlobalData(xml, params) {
+  var getXmlValue = window.__createXmlGetter(xml, params);
+  (function(_g){
+    _g.cgiData = _g.cgiData || {};
+    var d = _g.cgiData;
+    d.enterid = xml ? getXmlValue('enterid') * 1 || 0 : '' * 1 || 0; // 标识同一次进入视频落地页的Id
+    d.scene = xml ? getXmlValue('scene') * 1 || 0 : '' * 1 || 0; // 图文定义的页面来源 详见 10377协议
+    d.subscene = xml ? getXmlValue('subscene') * 1 || 0 : '' * 1 || 0; // 定义子来源 目前是长度bar
+    d.isDemo = xml ? getXmlValue('is_demo.DATA') * 1 : '' * 1;
+    d.page_type = xml ? getXmlValue('page_type.DATA') * 1 : '2' * 1; // 1:详情页 2:分享页
+    d.create_time = xml ? getXmlValue('ori_create_time.DATA') * 1 : '1654268371' * 1; // 发布时间，unix时间戳
+    d.ct = xml ? getXmlValue('ori_create_time.DATA') : '1654268371';
+    d.ct_str = xml ? getXmlValue('create_time.DATA') : '2022-06-03 22:59'; // 发布时间字符串，如2020-11-19
+    d.article_link = xml ? getXmlValue('article_link.DATA') : ''; // 原文链接，详情页才有
+    d.article_title = xml ? getXmlValue('article_title.DATA') : ''; // 原文标题，详情页才有
+    d.comment_id = xml ? getXmlValue('comment_id.DATA') : '0';
+    d.open_fansmsg = xml ? getXmlValue('open_fansmsg.DATA') * 1 : '1' * 1;
+    d.title = xml ? getXmlValue('title.DATA') : '主播说联播 | 今年端午节，别忽略了这层含义';
+    d.nick_name = xml ? getXmlValue('nick_name.DATA') : '新闻联播'; // 公众号昵称
+    d.cover = xml ? getXmlValue('cdn_url.DATA') : 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2yjU21jsapy0tQZAS0OMHfWhglI5VUhkxZ30mzZxwk6bGQtiayObOLFw/0?wx_fmt=jpeg'; // 封面
+    d.cdn_1_1_img = xml ? getXmlValue('cdn_url_1_1.DATA') : 'http://mmbiz.qpic.cn/mmbiz_jpg/QFoLZf9dncuWIibrhOKrmBLWbKQ4zp7s2gFkkRxhjcg2hqtD2RvLK1qOIL4aRXzeBqMgEPO2IPw5vd8JicdYWdZw/0?wx_fmt=jpeg'; // 1:1封面资源
+    d.round_head_img = xml ?
+      getXmlValue('round_head_img.DATA') || 'http://mmbiz.qpic.cn/mmbiz/a5icZrUmbV8p5jb6RZ8aYfjfS2AVle8URwBt8QIu6XbGewB9wiaWYWkPwq4R7pfdsFibuLkic16UcxDSNYtB8HnC1Q/0' :
+      'http://mmbiz.qpic.cn/mmbiz_png/QFoLZf9dncvsTfRW4Y8U7SXLmfxmHWP7Ppx0dgECgqcE4ZhnW3NTicn7ictTOEy18RUk2EOERLfmqJ2dXtZV8Aiag/0?wx_fmt=png' || 'http://mmbiz.qpic.cn/mmbiz/a5icZrUmbV8p5jb6RZ8aYfjfS2AVle8URwBt8QIu6XbGewB9wiaWYWkPwq4R7pfdsFibuLkic16UcxDSNYtB8HnC1Q/0'; // 公众号圆形头像
+    d.hd_head_img = xml ? getXmlValue('hd_head_img.DATA') || '' : 'http://wx.qlogo.cn/mmhead/Q3auHgzwzM7ViaayoQIN46HlibrbicJSUHmtbPzicdOtmBW7VENc2jQU4w/0' || ''; // 公众号高清头像
+    d.biz = xml ? getXmlValue('bizuin.DATA') || getXmlValue('__biz') : 'MzIxNzU1NTQwNQ==' || '';
+    d.sn = xml ? getXmlValue('sn.DATA') || getXmlValue('sn') || getXmlValue('sign') : '' || '' || '';
+    d.mid = xml ? getXmlValue('mid.DATA') || getXmlValue('mid') || getXmlValue('appmsgid') : '2247614205' || '' || '';
+    d.idx = xml ? getXmlValue('idx.DATA') || getXmlValue('idx') || getXmlValue('itemidx') : '1' || '' || '';
+    d.tempkey = xml ? getXmlValue('tempkey') : '';
+    d.is_temp_url = (xml ? getXmlValue('tempkey') : '') ? 1 : 0;
+    d.read_num = xml ? getXmlValue('appmsgstat.read_num.DATA') * 1 : '' * 1;
+    d.like_num = xml ? getXmlValue('appmsgstat.like_num.DATA') * 1 : '' * 1;
+    d.liked = (xml ? getXmlValue('appmsgstat.liked.DATA') : '') == 'true' ? true : false;
+    d.msg_link = xml ? getXmlValue('link.DATA') : '';
+    d.req_id = xml ? getXmlValue('req_id.DATA') : '0401nDKro8Q1t8n4KFCIawG2';
+    d.msg_daily_idx = xml ? getXmlValue('msg_daily_idx.DATA') : '1';
+    d.is_only_read = xml ? getXmlValue('is_only_read.DATA') * 1 : '1' * 1;
+    d.send_time = xml ? getXmlValue('send_time.DATA') : '';//临时链接时，发送时间
+    d.ori_send_time = xml ? getXmlValue('ori_send_time.DATA') : '1654268371'; //非临时链接时的发送时间
+    d.abtest_cookie = xml ? getXmlValue('abtest_cookie') : '';
+    d.devicetype = xml ? getXmlValue('devicetype') : '';
+    d.version = xml ? getXmlValue('version') : '';
+    d.user_name = xml ? getXmlValue('user_name.DATA') : 'gh_8d2b22908450';
+    d.nick_name = xml ? getXmlValue('nick_name.DATA') : '新闻联播';
+    d.malicious_title_reason_id = xml ? getXmlValue('malicious_title_reason_id.DATA') : '0'; // 20012低俗，90041夸大误导
+    d.malicious_content_type = xml ? getXmlValue('malicious_content_type.DATA') : '0'; // 0：标题；1：摘要；2：正文
+    d.svr_time = xml ? getXmlValue('svr_time.DATA') * 1 : '1654276786' * 1; // 服务器uinx时间戳
+    d.is_need_reward = xml ? getXmlValue('can_reward.DATA') * 1 : '0' * 1; // 是否需要赞赏
+    d.author_id = xml ? getXmlValue('author_id.DATA') : ''; // 作者id
+  })(window);
+};
+
+window.ip_wording = {
+  countryName: '中国',
+  countryId: '156',
+  provinceName: '北京',
+  provinceId: '',
+  cityName: '',
+  cityId: ''
+};
+window.show_ip_wording = '1' * 1;
+window.__initCgiDataConfig();
+</script>
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+//定义 window相关变量
+window.__initCommentConfig = function __initGlobalData(xml, params) {
+  var getXmlValue = window.__createXmlGetter(xml, params);
+  (function(_g){
+    _g.cgiData = _g.cgiData || {};
+    var cgiData = _g.cgiData;
+    //播放组件使用的空白音频
+    _g._empty_v = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/pages/voice/empty5e513b.mp3';
+    //兼容论坛的组件 appmsg/comment.js
+    _g.comment_edit_icon = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/icon_edit5e513b.png';
+    _g.comment_loading_img = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/common/icon_loading_white5e513b.gif';
+    _g.comment_id = cgiData.comment_id;
+    _g.appmsgid = cgiData.mid;
+    _g.mid = cgiData.mid;
+    _g.biz = cgiData.biz;
+    _g.idx = cgiData.idx;
+    _g.sn = cgiData.sn;
+    _g.appmsgid = xml ? getXmlValue('mid.DATA') || getXmlValue('appmsgid') || getXmlValue('mid') : '2247614205' || '' || '';
+    _g.itemidx = xml ? getXmlValue('idx.DATA') || getXmlValue('itemidx') || getXmlValue('idx') : '1' || '' || '';
+    _g.pass_ticket = xml ? getXmlValue('pass_ticket') : '';
+    _g.msg_title = cgiData.title;
+    _g.icon_emotion_switch = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch5e513b.svg';
+    _g.icon_emotion_switch_active = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_active5e513b.svg';
+    _g.icon_emotion_switch_primary = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_primary5e513b.svg';
+    _g.icon_emotion_switch_active_primary = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_active_primary5e513b.svg';
+    _g.scene = xml ? getXmlValue('scene') * 1 || 0 : '' * 1 || 0; // 广告需要
+    _g.is_temp_url = (xml ? getXmlValue('tempkey') : '') ? 1 : 0; // 广告需要
+    _g.icon_loading_white = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/common/icon_loading_white5e513b.gif';
+    _g.item_show_type = xml ? getXmlValue('item_show_type.DATA') : '5';
+    _g.real_item_show_type = xml ? getXmlValue('real_item_show_type.DATA') : '5';
+    _g.source = xml ? getXmlValue('scene') : '';//用于appmsgreport,详见appmsg\appmsg_report.js
+    _g.ascene = xml ? getXmlValue('ascene') : '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.req_id = xml ? getXmlValue('req_id.DATA') : '0401nDKro8Q1t8n4KFCIawG2';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.subscene = xml ? getXmlValue('subscene') : '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.user_uin = xml ? getXmlValue('user_uin.DATA') : '0';
+    _g.friend_read_source = xml ? getXmlValue('source') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.friend_read_version = xml ? getXmlValue('recommend_version') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.friend_read_class_id = xml ? getXmlValue('class_id') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.ct = xml ? getXmlValue('ori_create_time.DATA') : '1654268371';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.networkType = ''; // 网络状态，同过JSAPI获取网络状态
+    _g.can_see_complaint = xml ? getXmlValue('can_see_complaint.DATA') : '0'; // 广告投诉
+    _g.isprofileblock = xml ? getXmlValue('isprofileblock.DATA') * 1 : '0' * 1; // 限制跳转到公众号profile @radeonwu
+    _g.sessionid = xml ? getXmlValue('sessionid') || getXmlValue('base_resp.base_resp.sessionid.DATA') : ''||'svr_b73be714f1b'; // sessionid，与图文一致，用于上报
+    _g.new_appmsg = 1; // 留言使用新版样式
+    _g.comment_c2c_not_support_img = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/appmsg/pic_discuss_more5e513b.png'; // C2C更新教育图片
+    _g.scList = '' * 1;
+    _g.scType = '' * 1;
+  })(window);
+
+  //先把页面底色设置成白色，后续判断有评论和历史消息时，才干掉
+  (function(){
+    var bodyClassName = document.body.className || '';
+    if(bodyClassName.indexOf('rich_media_empty_extra')==-1){
+      bodyClassName += ' rich_media_empty_extra';
+    }
+    document.body.className = bodyClassName;
+  })();
+}
+window.__initCommentConfig();
+</script>
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+  window.real_show_page_time = +new Date();
+  if (!!window.addEventListener){
+    window.addEventListener('load', function(){
+      window.onload_endtime = +new Date();
+    });
+  }
+</script>
+
+
+<script type="text/javascript" nonce="12821795" reportloaderror>
+(function(_g){
+    _g.appmsg_like_type = "2" * 1 ? "2" * 1 : 1;
+    // _g.appmsg_like_type = 2;
+    _g.clientversion = "";
+    _g.passparam = ""; // 看一看带参数
+    if(!_g.msg_link) {
+      _g.msg_link = "";
+    }
+    _g.appmsg_type = "9"; // 后台图文消息类型
+    _g.devicetype = ""; // devicetype
+})(window);
+// 已翻译
+</script>
+
+  
+
+<script nomodule nonce="12821795" reportloaderror>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
+<script nomodule id="vite-legacy-polyfill" src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/polyfills-legacy.ce1f5856.js" nonce="12821795" reportloaderror></script>
+<script nomodule id="vite-legacy-entry" src="https://images.weserv.nl/?url=//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_video-legacy.c12ef0d0.js" nonce="12821795" reportloaderror>System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+
+<script type="text/javascript" nonce="12821795" reportloaderror>var __INLINE_SCRIPT__=function(){"use strict";var n=function(n){var i=document.getElementById("js_ip_wording_wrp"),o=document.getElementById("js_ip_wording");if(n&&(window.ip_wording={countryName:n.country_name,countryId:n.country_id,provinceName:n.province_name}),window.ip_wording&&i&&o){var r=function(n){var i="";return 156===parseInt(n.countryId,10)?i=n.provinceName:n.countryId&&(i=n.countryName),i}(window.ip_wording);""!==r&&(o.innerHTML=r,i.style.display="inline-block")}};return window.__second_open__||(n(),window.__setIpWording=n),n}();</script>
+
+<script nomodule nonce="12821795" reportloaderror>new Image().src='https://mp.weixin.qq.com/mp/jsmonitor?idkey=66881_111_1&t='+Math.random();</script>
+
+    
+    <link rel="stylesheet" type="text/css" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/style/page/appmsg_new/mod/weui_a11y5e513c.css" reportloaderror>
+<script type="text/javascript" src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/lib/wa-helper.min5e513c.js" nonce="12821795" reportloaderror></script>
+<script type="text/javascript" nonce="12821795" reportloaderror>
+  // WAH.default.init()
+</script>
+
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_colon">：</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_comma">，</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_period">。</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_space">&nbsp;</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_video">视频</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_weapp">小程序</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_txt">赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_tips">，轻点两下取消赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_txt">在看</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_tips">，轻点两下取消在看</span>
+
+  </body>
+</html>
+
+
