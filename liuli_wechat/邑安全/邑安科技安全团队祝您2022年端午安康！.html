@@ -1,0 +1,1224 @@
+<!DOCTYPE html>
+<html class="">
+  <head>
+            <meta name="wechat-enable-text-zoom-em" content="true">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=0,viewport-fit=cover">
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="format-detection" content="telephone=no">
+<script  nonce="1686712402" reportloaderror>try{document.getElementsByTagName('html').item(0).style.webkitTextSizeAdjust=JSON.parse(window.__wxWebEnv.getEnv()).fontScale+'%'}catch(e){}</script>
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+  window.logs = { pagetime: {} };
+  window.logs.pagetime['html_begin'] = (+new Date());
+  window.LANG = "zh_CN"; // 页面语言 zh_CN en_US
+</script>
+
+    <script type="text/javascript" nonce="1686712402" reportloaderror>
+/**
+ * 于2022-02-21重构vite
+ * 仅保留原有moon.js中上报相关的部分
+ * @author baakqiu
+ * @date 2022-02-21
+ */
+
+var WX_BJ_REPORT = window.WX_BJ_REPORT || {};
+(function(_) {
+  if (_.BadJs) {
+    return;
+  }
+  //onerror上报名 
+  var BADJS_WIN_ERR = 'BadjsWindowError';
+  var extend = function(source, destination) {
+    for (var property in destination) {
+      source[property] = destination[property]
+    }
+    return source
+  }
+  /*
+    出错上报字段:mid name key  msg  stack file col line uin
+    mid 模块名
+    name 监控名
+    key 特征值
+    msg 额外信息
+  */
+  _.BadJs = {
+    uin: 0,
+    mid: "",
+    view: "wap",
+    _cache: {}, //上报_cache 同一mid name key 只会上报一次
+    _info: {}, // 打点记录 会写入msg帮助定位
+    _hookCallback: null,
+    ignorePath: true,
+    throw: function(e, extData) {
+      this.onError(e, extData);
+      throw e;
+    },
+    //接收异常并上报处理 如果有额外信息可以放在第二个参数_data中
+    // _data 只能覆盖上报协议的字段mid （name,key 不建议通过data覆盖） msg  stack file col line uin
+    onError: function(e, extData) {
+      try {
+        //标记已执行的throw
+        if (e.BADJS_EXCUTED == true) {
+          return;
+        }
+        e.BADJS_EXCUTED = true;
+        var data = errToData(e);
+        data.uin = this.uin;
+        data.mid = this.mid;
+        data.view = this.view;
+        data.cmdb_module = 'mmbizwap';
+        //data.msg = msg || data.msg;
+        if (!!extData) {
+          data = extend(data, extData);
+        }
+        //如果cid存在 将cid合并到key
+        if (data.cid) {
+          data.key = "[" + data.cid + "]:" + data.key;
+        }
+        
+        if (data._info) {
+          if (Object.prototype.toString.call(data._info) == "[object Object]") {
+            data.msg += " || info:" + JSON.stringify(data._info);
+          } else if (Object.prototype.toString.call(data._info) == "[object String]") {
+            data.msg += " || info:" + data._info;
+          } else {
+            data.msg += " || info:" + data._info;
+          }
+        }
+        if (typeof this._hookCallback == "function") {
+          if (this._hookCallback(data) === false) {
+            return
+          }
+        }
+        this._send(data);
+        return _.BadJs;
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    winErr: function(event) {
+      if (event.error && event.error.BADJS_EXCUTED) {
+        return;
+      }
+      if (event.type === 'unhandledrejection') {
+        _.BadJs.onError(createError(event.type, event.reason, "", "", "", event.reason));
+      }else{
+        _.BadJs.onError(createError(BADJS_WIN_ERR, event.message, event.filename, event.lineno, event.colno, event.error));
+      }
+    },
+    init: function(uin, mid, view) {
+      this.uin = uin || this.uin;
+      this.mid = mid || this.mid;
+      this.view = view || this.view;
+      return _.BadJs;
+    },
+    //钩子函数
+    hook: function(fn) {
+      this._hookCallback = fn;
+      return _.BadJs;
+    },
+    _send: function(data) {
+      //hack uin mid
+      if (!data.mid) {
+        if (typeof window.PAGE_MID !== 'undefined' && window.PAGE_MID) {
+          data.mid = window.PAGE_MID;
+        } else {
+          return;
+        }
+      }
+      if (!data.uin) {
+        data.uin = window.user_uin || 0;
+      }
+      // 发送要去重 
+      var flag = [data.mid, data.name, data.key].join("|");
+      if (this._cache && this._cache[flag]) {
+        return
+      } else {
+        this._cache && (this._cache[flag] = true);
+        this._xhr(data);
+      }
+      return _.BadJs;
+    },
+    _xhr: function(data) {
+      //console.log(data);
+      var xmlobj;
+      if (window.ActiveXObject) {
+        try {
+          xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+        } catch (e) {
+          try {
+            xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+          } catch (E) {
+            xmlobj = false;
+          }
+        }
+      } else if (window.XMLHttpRequest) {
+        xmlobj = new XMLHttpRequest();
+      }
+      var param = "";
+      for (var key in data) {
+        if (key && data[key]) {
+          param += [key, "=", encodeURIComponent(data[key]), "&"].join("");
+        }
+      }
+      if (xmlobj && typeof xmlobj.open == "function") {
+        xmlobj.open("POST", "https://badjs.weixinbridge.com/report", true);
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        xmlobj.onreadystatechange = function(status) {};
+        xmlobj.send(param.slice(0, -1));
+      } else {
+        var img = new Image();
+        img.src = "https://badjs.weixinbridge.com/report?" + param;
+      }
+    },
+    // key是特征值 默认上报msg就是key，也可以主动传msg包含更多上报信息 
+    report: function(name, key, data) {
+      this.onError(createError(name, key), data);
+      return this;
+    },
+    // 打点标记
+    mark: function(info) {
+      this._info = extend(this._info, info);
+    },
+    nocache: function() {
+      this._cache = false;
+      return _.BadJs;
+    }
+  }
+  function createError(name, msg, url, line, col, error) {
+    return {
+      name: name || "",
+      message: msg || "",
+      file: url || "",
+      line: line || "",
+      col: col || "",
+      stack: (error && error.stack) || "",
+    }
+  }
+  //将异常错误转换成上报协议支持的字段
+  /*
+  * 先取e对象上的file line col等字段
+  * 再解析e.statck
+  * name 错误大类 默认取badjs_try_err|badjs_win_err
+  * key  错误标识 e.message
+  * msg  错误信息 e.message
+  * stack 错误堆栈 e.stack
+  * file 错误发生的文件
+  * line 行
+  * col 列
+  * client_version
+  */
+  function errToData(e) {
+    var _stack = parseStack(e);
+    return {
+      name: e.name,
+      key: e.message,
+      msg: e.message,
+      stack: _stack.info,
+      file: _stack.file,
+      line: _stack.line,
+      col: _stack.col,
+      client_version: "",
+      _info: e._info
+    }
+  }
+  function parseStack(e) {
+    e._info = e._info || ""; // 当前错误的额外信息 最终上报到info
+    var stack = e.stack || "";
+    var _stack = {
+      info: stack,
+      file: e.file || "",
+      line: e.line || "",
+      col: e.col || "",
+    };
+    if (_stack.file == "") {
+      // 提取file line col
+      var stackArr = stack.split(/\bat\b/);
+      if (stackArr && stackArr[1]) {
+        var match = /(https?:\/\/[^\n]+)\:(\d+)\:(\d+)/.exec(stackArr[1]);
+        if (match) {
+          //若stack提取的file line col跟e中的属性不一致，以stack为准 但在e._info中记录原始数据
+          if (match[1] && match[1] != _stack.file) {
+            _stack.file && (e._info += " [file: " + _stack.file + " ]");
+            _stack.file = match[1];
+          }
+          if (match[2] && match[2] != _stack.line) {
+            _stack.line && (e._info += " [line: " + _stack.line + " ]");
+            _stack.line = match[2];
+          }
+          if (match[3] && match[3] != _stack.col) {
+            _stack.col && (e._info += " [col: " + _stack.col + " ]");
+            _stack.col = match[3];
+          }
+        }
+      }
+    }
+    //替换堆栈中的文件路径 combojs太长
+    if (_stack && _stack.file && _stack.file.length > 0) {
+      _stack.info = _stack.info.replace(new RegExp(_stack.file.split("?")[0], "gi"), "__FILE__")
+    }
+    //堆栈路径只保存文件名
+    if (_.BadJs.ignorePath) {
+      _stack.info = _stack.info.replace(/http(s)?\:[^:\n]*\//ig, "").replace(/\n/gi, "");
+    }
+    return _stack;
+  }
+  //兜底方法
+  window.addEventListener && window.addEventListener('error', _.BadJs.winErr);
+  window.addEventListener && window.addEventListener('unhandledrejection', _.BadJs.winErr);
+  return _.BadJs;
+})(WX_BJ_REPORT);
+window.WX_BJ_REPORT = WX_BJ_REPORT;
+/**
+ * 兼容wap项目的简单CMD管理
+ * 所有wap项目必须包含此文件才可以执行成功
+ * 暴露在全局的变量仍然以seajs为命名空间，跟web项目保持一致
+ * 支持的API是seajs.use，以及require define
+ * @author raphealguo
+ * @date 20140326
+ */
+function __moonf__() {
+  if (window.__moonhasinit) return;
+  window.__moonhasinit = true;
+  window.__moonclientlog = []; // moon中存到客户端日志里面的内容，最终写入到客户端的地点在fereport.js
+  if (typeof JSON != "object") { //针对IE7的hack
+    window.JSON = {
+      stringify: function() { return ""; },
+      parse: function() { return {}; }
+    };
+  }
+  var moon_init = function() {
+    // 前端的@cunjinli
+    (function() {
+      // @cunjinli 重写alert函数, moonsafe监控
+      var _alert = window.alert;
+      window.__alertList = [];
+      window.alert = function(msg) {
+        _alert(msg);
+        window.__alertList.push(msg);
+      };
+    })();
+    /**
+     * moonsafe @cunjinli 加在这里
+     */
+    (function() {
+      // if (window.__nonce_str) {
+      //   var __old_createElement = document.createElement;
+      //   document.createElement = function(tagName) {
+      //     var node = __old_createElement.apply(this, arguments);
+      //     if (typeof tagName == 'object') {
+      //       tagName = tagName.toString();
+      //     }
+      //     if (typeof tagName == 'string' && tagName.toLowerCase() == 'script') {
+      //       node.setAttribute("nonce", window.__nonce_str);
+      //     }
+      //     return node;
+      //   }
+      // }
+      if (window.addEventListener && window.__DEBUGINFO && Math.random() < 0.01) {
+        window.addEventListener("load", function() {
+          var node = document.createElement('script');
+          node.src = __DEBUGINFO.safe_js;
+          node.type = 'text/javascript';
+          node.async = true;
+          var head = document.head || (document.getElementsByTagName("head")[0]);
+          head.appendChild(node);
+        });
+      }
+    })();
+    /**
+     * mooncatch
+     * 对各种异步回调都使用try catch错误上报
+     * @radeonwu raphealguo
+     */
+    (function() {
+      var inWx = (/MicroMessenger/i).test(navigator.userAgent);
+      var inMp = (/MPAPP/i).test(navigator.userAgent);
+      var _idkey = 121261; //上报的idkey 添加默认上报值
+      var _startKey; //开始的key
+      var _limit; //上报的key的长度
+      var _badjsId;
+      var _reportOpt; //上报的额外信息
+      var _extInfo; //附加的预留字段，如网络采样率采样率network_rate， 总体上报率rate
+      var MOON_LISTENER_ERROR_KEY_OFFSET = 2; //addEventListener上报时的偏移量为2
+      var MOON_AJAX_NETWORK_OFFSET = 4; //network错误时的上报偏移量为4，这里在ajax.js中上报，这里需要加入采样率
+      var MOON_ASYNC_ERROR_KEY_OFFSET = 9; //setTimeout和setInterval上报时的偏移量为9
+      var MOON_LOCALSTORAGE_ERROR_KEY_OFFSET = 10; //localstorage.setItem失败时的偏移量为10
+      window.__initCatch = function(opt) {
+        _idkey = opt.idkey;
+        _startKey = opt.startKey || 0;
+        _limit = opt.limit;
+        _badjsId = opt.badjsId;
+        _reportOpt = opt.reportOpt || "";
+        _extInfo = opt.extInfo || {};
+        _extInfo.rate = _extInfo.rate || 0.5;
+      }
+      //暴露的上报函数，供core.js和ajax.js上报错误使用，array = [{offset:MOON_JSAPI_KEY_OFFSET, log:"ready", e:e}]
+      window.__moon_report = function(array, rate_opt) {
+        var isAcrossOrigin = false;
+        var href = '';
+        try {
+          href = top.location.href;
+        } catch (e) {
+          isAcrossOrigin = true;
+        }
+        var rate = 0.5;
+        if (!!_extInfo && !!_extInfo.rate) {
+          rate = _extInfo.rate;
+        }
+        if (!!rate_opt && (typeof rate_opt == 'number')) {
+          rate = rate_opt;
+        }
+        if (
+          (!(/mp\.weixin\.qq\.com/).test(location.href) && !(/payapp\.weixin\.qq\.com/).test(location.href)) ||
+          Math.random() > rate ||
+          !(inWx || inMp) ||
+          (top != window && !isAcrossOrigin && !(/mp\.weixin\.qq\.com/).test(href))
+        ) {
+          //return ;
+        }
+        if (isObject(array))
+          array = [array];
+        if (!isArray(array) || _idkey == '')
+          return;
+        var data = "";
+        var log = []; //存放array中每个对象关联的log
+        var key = []; //存放array中每个上报的key
+        var val = []; //存放array中每个上报的value
+        var idkey = [];
+        //如果这里没有opt.limit，直接上报到startKey
+        if (typeof _limit != "number") {
+          _limit = Infinity;
+        }
+        for (var i = 0; i < array.length; i++) {
+          var item = array[i] || {};
+          if (item.offset > _limit) continue; //上报的偏移量超过limit
+          if (typeof item.offset != "number") continue;
+          if (item.offset == MOON_AJAX_NETWORK_OFFSET && !!_extInfo && !!_extInfo.network_rate && Math.random() >= _extInfo.network_rate) {
+            continue;
+          }
+          //log[i] = item.log || "";
+          var k = _limit == Infinity ? _startKey : (_startKey + item.offset);
+          log[i] = (("[moon]" + _idkey + "_" + k + ";") + item.log + ";" + getErrorMessage(item.e || {})) || "";
+          key[i] = k;
+          val[i] = 1;
+        }
+        for (var j = 0; j < key.length; j++) {
+          idkey[j] = _idkey + "_" + key[j] + "_" + val[j];
+          data = data + "&log" + j + "=" + log[j];
+        }
+        if (idkey.length > 0) {
+          // sendReport("idkey=" + idkey.join(";") + "&lc=" + log.length + data);
+          sendReport("POST", location.protocol + '//mp.weixin.qq.com/mp/jsmonitor?', "idkey=" + idkey.join(";") + "&r=" + Math.random() + "&lc=" + log.length + data);
+          // 把图文消息的错误上报一份到badjs，只支持get请求
+          // 这里由于量比较大，把badjs的内层怼爆了，这里加多一个采样，并且去掉用户的信息
+          var rate = 1;
+          if (_extInfo && _extInfo.badjs_rate) { // 初始化时的badjs采样率
+            rate = _extInfo.badjs_rate;
+          }
+          if (Math.random() < rate) {
+            data = data.replace(/uin\:(.)*\|biz\:(.)*\|mid\:(.)*\|idx\:(.)*\|sn\:(.)*\|/, '');
+            if(!!_badjsId){
+              var _img = new Image();
+              var _src = 'https://badjs.weixinbridge.com/badjs?id=' + _badjsId + '&level=4&from=' + encodeURIComponent(location.host) + '&msg=' + encodeURIComponent(data);
+              _img.src = _src.slice(0, 1024);
+            }
+            // badjs同时报一份到新监控 
+            if (typeof WX_BJ_REPORT != "undefined" && WX_BJ_REPORT.BadJs) {
+              for (var i = 0; i < array.length; i++) {
+                var item = array[i] || {};
+                if (item.e) {
+                  WX_BJ_REPORT.BadJs.onError(item.e,{_info:item.log});
+                } else {
+                  var name = /[^:;]*/.exec(item.log)[0];
+                  WX_BJ_REPORT.BadJs.report(name, item.log, { mid: "mmbizwap:Monitor" });
+                }
+              }
+            }
+          } else {
+            //虽然采样没有执行 但实际是有被BadJs.onError，置位一下
+            for (var i = 0; i < array.length; i++) {
+              var item = array[i] || {};
+              if (item.e) {
+                item.e.BADJS_EXCUTED = true;
+              }
+            }
+          }
+        }
+      }
+      function isArray(obj) { //判断输入是否为数组
+        return Object.prototype.toString.call(obj) === '[object Array]';
+      }
+      function isObject(obj) { //判断输入是否为对象
+        return Object.prototype.toString.call(obj) === '[object Object]';
+      }
+      function getErrorMessage(e) {
+        var stack = e.stack + ' ' + e.toString() || ""; //错误堆栈信息
+        try {
+          //先取出res域名
+          if (!window.testenv_reshost) {
+            stack = stack.replace(/http(s)?:\/\/res\.wx\.qq\.com/g, "");
+          } else {
+            var host = 'http(s)?://' + window.testenv_reshost;
+            var reg = new RegExp(host, 'g');
+            stack = stack.replace(reg, "");
+          }
+          //提取最后一个.js前边的
+          var reg = /\/([^.]+)\/js\/(\S+?)\.js(\,|:)?/g;
+          while (reg.test(stack)) {
+            // stack = stack.replace(reg, "3"); 解决$问题
+            stack = stack.replace(reg, function(a, b, c, d, e, f) {
+              return c + d
+            });
+          }
+        } catch (e) {
+          stack = e.stack ? e.stack : "" //错误堆栈信息
+        }
+        var ret = [];
+        for (o in _reportOpt) {
+          if (_reportOpt.hasOwnProperty(o)) {
+            ret.push(o + ":" + _reportOpt[o]);
+          }
+        }
+        ret.push("STK:" + stack.replace(/\n/g, ""));
+        return ret.join("|");
+      }
+      function sendReport(type, url, data) { //post方法用于提交数据
+        if (!/^mp\.weixin\.qq\.com$/.test(location.hostname)) { //非MP域名使用 img方式上报
+          var tmp = [];
+          data = data.replace(location.href, (location.origin || "") + (location.pathname || "")).replace("#wechat_redirect", "").replace("#rd", "").split("&");
+          for (var i = 0, il = data.length; i < il; i++) {
+            var a = data[i].split("=");
+            if (!!a[0] && !!a[1]) {
+              tmp.push(a[0] + "=" + encodeURIComponent(a[1]));
+            }
+          }
+          var _img = new window.Image();
+          _img.src = (url + tmp.join("&")).substr(0, 1024);
+          return;
+        }
+        var xmlobj; //定义XMLHttpRequest对象  
+        if (window.ActiveXObject) { //如果当前浏览器支持Active Xobject，则创建ActiveXObject对象    
+          try {
+            xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+          } catch (e) {
+            try {
+              xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+            } catch (E) {
+              xmlobj = false;
+            }
+          }
+        } else if (window.XMLHttpRequest) { //如果当前浏览器支持XMLHttpRequest，则创建XMLHttpRequest对象  
+          xmlobj = new XMLHttpRequest();
+        }
+        if (!xmlobj) return;
+        //xmlobj.open("POST", location.protocol + "//mp.weixin.qq.com/mp/jsmonitor?", true);         
+        xmlobj.open(type, url, true);
+        xmlobj.setRequestHeader("cache-control", "no-cache");
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"); //设置请求头信息              
+        xmlobj.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+        xmlobj.send(data); //发送数据  
+      }
+      function catTimeout(foo) {
+        return function(cb, timeout) {
+          if (typeof cb === 'string') {
+            try {
+              cb = new Function(cb);
+            } catch (err) {
+              throw err;
+            }
+          }
+          var args = [].slice.call(arguments, 2);
+          var _cb = cb;
+          cb = function() {
+            try {
+              return _cb.apply(this, (args.length && args) || arguments);
+            } catch (error) {
+              if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                console.error("[TryCatch]" + error.stack);
+              }
+              if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                //sendReport(error);
+                window.__moon_report([{ offset: MOON_ASYNC_ERROR_KEY_OFFSET, log: "timeout_error;host:" + location.host, e: error }]);
+                //breakOnError(timeoutkey);
+              }
+              throw error;
+            }
+          }
+          return foo(cb, timeout);
+        };
+      };
+      window.setTimeout = catTimeout(window.setTimeout);
+      window.setInterval = catTimeout(window.setInterval);
+      if (Math.random() < 0.01 && !!window.Document && !!window.HTMLElement) {
+        var cb_map = {};
+        var moon_lid = 0;
+        function catAddListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            var _cb = cb || function() {};
+            cb = function() {
+              try {
+                //arguments[0].currentTarget.setAttribute("data-moon_lid") = moon_lid;
+                //_cb.moon_lid = moon_lid;
+                return _cb.apply(that, arguments);
+              } catch (error) {
+                if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                  console.error("[TryCatch]" + error.stack);
+                }
+                if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                  window.__moon_report([{ offset: MOON_LISTENER_ERROR_KEY_OFFSET, log: "listener_error;type:" + type + ";host:" + location.host, e: error }]);
+                  //breakOnError(timeoutkey);
+                }
+                throw error;
+              }
+            }
+            _cb.moon_lid = moon_lid;
+            cb_map[moon_lid] = cb;
+            moon_lid++;
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        function catRemoveListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            cb = cb_map[cb.moon_lid];
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        Document.prototype.addEventListener = catAddListener(Document.prototype.addEventListener);
+        Document.prototype.removeEventListener = catRemoveListener(Document.prototype.removeEventListener);
+        HTMLElement.prototype.addEventListener = catAddListener(HTMLElement.prototype.addEventListener);
+        HTMLElement.prototype.removeEventListener = catRemoveListener(HTMLElement.prototype.removeEventListener);
+      }
+      //alert("setItem begin");
+      //window.localStorage.setItem = function(){a=c;}//故意
+      var ua = window.navigator.userAgent;
+      if ((/ip(hone|ad|od)/i.test(ua) || /android/i.test(ua)) && !/windows phone/i.test(ua) && !!window.localStorage && !!window.localStorage.setItem) {
+        var _setItem = window.localStorage.setItem;
+        var count = 0;
+        window.localStorage.setItem = function(k, v) {
+          if (count >= 10) { //一直失败 不要再继续试了，可能类似safari无痕模式 不允许写入了
+            return;
+          }
+          try {
+            _setItem.call(window.localStorage, k, v);
+          } catch (error) {
+            //alert(error);
+            if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+              console.error("[TryCatch]" + error.stack);
+            }
+            window.__moon_report([{ offset: MOON_LOCALSTORAGE_ERROR_KEY_OFFSET, log: "localstorage_error;" + error.toString(), e: error }]);
+            count++;
+            if (count >= 3 && !!window.moon && window.moon.clear) {
+              // 可能爆满 清理一下localstorage
+              moon.clear();
+            }
+          }
+        }
+        //alert("setItem end");
+      }
+    })();
+    // 后面的@cunjinli
+  };
+  moon_init();
+  //由于moon异步化，所以有些逻辑需要moon加载完之后才执行的 放到全局callback函数__moon_initcallback里边
+  (!!window.__moon_initcallback) && (window.__moon_initcallback());
+}
+// 为适应inline逻辑，有map时才主动自执行 @zhikaimai
+// if (typeof window.moon_map == 'object') {
+//     __moonf__();
+// }
+__moonf__();
+
+if (!!window.addEventListener){
+  window.addEventListener("load",function(){
+    var MOON_SCRIPT_ERROR_KEY_OFFSET = 1; //script上报时的偏移量为1
+    var ns = document.querySelectorAll("[reportloaderror]");
+    for(var ni=0,nl=ns.length;ni<nl;ni++)
+      ns[ni].onerror=function(ev){
+        window.__moon_report([{ offset: MOON_SCRIPT_ERROR_KEY_OFFSET, log: "load_script_error:" + ev.target.src, e: new Error('LoadResError') }], 1);
+        window.WX_BJ_REPORT.BadJs.report("load_script_error", ev.target.src, { mid: "mmbizwap:Monitor" });
+      };
+  });
+}
+</script>
+
+    <script type="text/javascript" nonce="1686712402" reportloaderror>
+  var testRdmUrl = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/common/avatar_default5e513b.svg';
+  // 如果是资源是mp域名，则是rdm环境
+  if (testRdmUrl.indexOf('mp.weixin.qq.com') > 0) {
+    window.__allowLoadResFromMp = true; // 允许从mp.weixin.qq.com加载js资源
+    window.__loadAllResFromMp = true; // 所有js资源都从mp域名加载
+
+    // 给底色加个原谅绿
+    // document.documentElement.style.boxShadow = 'inset 0 0 15px green';
+  }
+</script>
+
+
+    
+
+  
+  <meta name="description" content="邑安科技安全团队祝您2022年端午安康！" />
+  <meta name="author" content="" />
+
+  
+  <meta property="og:title" content="邑安科技安全团队祝您2022年端午安康！" />
+  <meta property="og:url" content="" />
+  <meta property="og:image" content="https://mmbiz.qpic.cn/mmbiz_jpg/1N39PtINn8tzZz6wDdApmgGj6uIPwhVN0SjibvTqfjfBzchyBiaziabwYoYvicVU6D1icW6wNmicq2h6tYBvKtg6FnJA/0?wx_fmt=jpeg" />
+  <meta property="og:description" content="邑安科技安全团队祝您2022年端午安康！" />
+  <meta property="og:site_name" content="微信公众平台" />
+  <meta property="og:type" content="article" />
+  <meta property="og:article:author" content="" />
+
+  
+  <meta property="twitter:card" content="summary" />
+  <meta property="twitter:image" content="https://mmbiz.qpic.cn/mmbiz_jpg/1N39PtINn8tzZz6wDdApmgGj6uIPwhVN0SjibvTqfjfBzchyBiaziabwYoYvicVU6D1icW6wNmicq2h6tYBvKtg6FnJA/0?wx_fmt=jpeg" />
+  <meta property="twitter:title" content="邑安科技安全团队祝您2022年端午安康！" />
+  <meta property="twitter:creator" content="" />
+  <meta property="twitter:site" content="微信公众平台" />
+  <meta property="twitter:description" content="邑安科技安全团队祝您2022年端午安康！" />
+
+
+    <title></title>
+    
+    
+<script type="module" nonce="1686712402" reportloaderror>!function(){try{new Function("m","return import(m)")}catch(o){console.warn("vite: loading legacy build because dynamic import is unsupported, syntax error above should be ignored");var e=document.getElementById("vite-legacy-polyfill"),n=document.createElement("script");n.src=e.src,n.onload=function(){System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))},document.body.appendChild(n)}}();</script>
+<script type="module" crossorigin src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_image.28905946.js" nonce="1686712402" reportloaderror></script>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/sprite.e3a96375.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/vendor.714d1b26.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/report.a93d5881.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/wxwork_hidden.07e05f17.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/review_image.5834b451.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/page_bottom.e546900c.js" reportloaderror>
+<link rel="modulepreload" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/init_ext.48c9cc6e.js" reportloaderror>
+
+
+
+
+
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_image.252fb42d.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/sprite.dcee1002.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/report.301986bf.css" reportloaderror>
+<link rel="stylesheet" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/wxwork_hidden.00d6a251.css" reportloaderror>
+
+    <style>
+      .cooldown_tips {
+        margin: 30px auto;
+        margin-top: 0;
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        font-size: 14px;
+        background-color: #f6f7f9;
+        border-radius: 6px;
+      }   
+      .cooldown_tips_icon {
+        display: block;
+        width: 18px;
+        height: 18px;
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+
+  <body id="" class="zh_CN wx_wap_page 
+
+                                            wx_wap_desktop_fontsize_2   page_share_common page_share_img pages_skin_default discuss_tab appmsg_skin_default appmsg_style_default">
+    
+    
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+window.page_begintime = (+new Date());
+</script>
+
+
+    <link rel="dns-prefetch" href="//res.wx.qq.com" reportloaderror>
+<link rel="dns-prefetch" href="//mmbiz.qpic.cn" reportloaderror>
+<link rel="dns-prefetch" href="https://wxa.wxs.qq.com" reportloaderror>
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+String.prototype.html = function (encode) {
+  var replace = ["&#39;", "'", "&quot;", '"', "&nbsp;", " ", "&gt;", ">", "&lt;", "<", "&yen;", "¥", "&amp;", "&"];
+  // 最新版的safari 12有一个BUG，如果使用字面量定义一个数组，var a = [1, 2, 3]
+  // 当调用了 a.reverse() 方法把变量 a 元素顺序反转成 3, 2, 1 后，
+  // 即使此页面刷新了， 或者此页面使用 A标签、 window.open 打开的页面，
+  // 只要调用到同一段代码， 变量 a 的元素顺序都会变成 3, 2, 1
+  // 所以这里不用 reverse 方法
+  /*
+  if (encode) {
+      replace.reverse();
+  }*/
+  var replaceReverse = ["&", "&amp;", "¥", "&yen;", "<", "&lt;", ">", "&gt;", " ", "&nbsp;", '"', "&quot;", "'", "&#39;"];
+  var target;
+  if (encode) {
+    target = replaceReverse;
+  } else {
+    target = replace;
+  }
+  for (var i = 0, str = this; i < target.length; i += 2) {
+    str = str.replace(new RegExp(target[i], 'g'), target[i + 1]);
+  }
+  return str;
+};
+
+window.isInWeixinApp = function () {
+  return /MicroMessenger/.test(navigator.userAgent);
+};
+
+window.getQueryFromURL = function (url) {
+  url = url || 'http://qq.com/s?a=b#rd'; // 做一层保护，保证URL是合法的
+  var tmp = url.split('?'),
+    query = (tmp[1] || "").split('#')[0].split('&'),
+    params = {};
+  for (var i = 0; i < query.length; i++) {
+    var arg = query[i].split('=');
+    params[arg[0]] = arg[1];
+  }
+  if (params['pass_ticket']) {
+    params['pass_ticket'] = encodeURIComponent(params['pass_ticket'].html(false).html(false).replace(/\s/g, "+"));
+  }
+  return params;
+};
+
+(function () {
+  var params = getQueryFromURL(location.href);
+  window.uin = params['uin'] || "" || '';
+  window.key = params['key'] || "" || '';
+  window.wxtoken = params['wxtoken'] || '';
+  window.pass_ticket = params['pass_ticket'] || '';
+  window.appmsg_token = "";
+})();
+</script>
+    
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+window.write_sceen_time = (+new Date());//页面白屏时间
+</script>
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>window.PAGE_MID="mmbizwap:pages/image_detail.html"</script>
+<div id="js_article" class="page_pages ">
+  <div class="rich_media_area_primary rich_media_area_primary_full">
+    <div class="rich_media_area_primary_inner">
+      
+    </div>
+  </div>
+  <div id="js_article_content" class="rich_media_area_primary">
+    <div class="rich_media_area_primary_inner">
+      
+      <div class="share_mod_context share_global_info">
+        <div class="flex_context account_info">
+          <div aria-hidden="true" class="js_go_profile flex_hd weui-wa-hotarea">
+            <span class="radius_avatar account_avatar">
+                            <img class="account_avatar" src="http://mmbiz.qpic.cn/mmbiz_png/1N39PtINn8uVmv7llchCht5wibibKgialViaiaia9PzqHBQ837vUgK3Z6ue6bVqp6GKyUJR9bfjL3Gomh7apWvdmuXmQ/0?wx_fmt=png" alt="邑安全">
+                          </span>
+          </div>
+          <div class="flex_bd">
+            <div class="js_go_profile account_nickname weui-wa-hotarea js_wx_tap_highlight wx_tap_link">
+              <strong id="js_account_nickname" role="link" tabindex="0"
+                aria-describedby="publish_time js_a11y_comma js_ip_wording_wrp js_a11y_comma article_btn_tips article_btn"
+                class="account_nickname_inner">
+                邑安全              </strong>
+            </div>
+            <div class="account_desc" id="js_account_desc">
+              <span class="account_desc_meta" id="publish_time" aria-hidden="true">2022-06-03&nbsp;14:00</span>
+              <span class="account_desc_meta" id="js_ip_wording_wrp" aria-hidden="true" style="display: none;">发表于<span id="js_ip_wording" ></span></span>
+                          </div>
+          </div>
+        </div>
+        <div id="js_content">
+                    <p class="share_notice" lang="en" id="js_image_desc" role="option">
+            <script  nonce="1686712402" reportloaderror>
+            if (!window.__second_open__) {
+              document.getElementById('js_image_desc').innerHTML = "邑安科技安全团队祝您2022年端午安康！".replace(/\r/g,"").replace(/\n/g,"<br>").replace(/\s/g,"&nbsp;");
+            }
+            </script>
+          </p>
+                    <div id="img_list" class="share_media">
+                        <img src="https://mmbiz.qpic.cn/mmbiz_jpg/1N39PtINn8tzZz6wDdApmgGj6uIPwhVN0SjibvTqfjfBzchyBiaziabwYoYvicVU6D1icW6wNmicq2h6tYBvKtg6FnJA/0?wx_fmt=jpeg">
+                      </div>
+        </div>
+      </div>
+      
+      <div id="content_bottom_area" class="rich_media_tool_area"></div>
+    </div>
+  </div>
+  <div class="rich_media_area_extra">
+    <div class="rich_media_area_extra_inner">
+      
+      <div class="wx_follow_container" id="js_like_profile_container"></div>
+      
+      <div id="page_bottom_area"></div>
+    </div>
+  </div>
+</div>
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+window.first_sceen__time = (+new Date());//页面首屏时间
+</script>
+
+
+<div class="comment_primary_emotion_panel_wrp" id="js_emotion_panel_pc" style="display: none">
+  <div class="comment_primary_emotion_panel">
+    <ul class="comment_primary_emotion_list_pc" id="js_emotion_list_pc">
+    </ul>
+  </div>
+</div>
+
+
+<div class="weui-dialog__wrp" id="js_alert_panel" style="display:none;">
+  <div class="weui-mask"></div>
+  <div class="weui-dialog">
+    <div class="weui-dialog__bd" id="js_alert_content"></div>
+    <div class="weui-dialog__ft">
+      <a href="javascript:;" class="weui-dialog__btn weui-dialog__btn_default" id="js_alert_confirm">知道了</a>
+    </div>
+  </div>
+</div>
+
+
+    <script type="text/javascript" nonce="1686712402" reportloaderror>
+window.logs.pagetime.page_begin = Date.now();
+</script>
+    <script type="text/javascript" nonce="1686712402" reportloaderror>
+var __DEBUGINFO = {
+  debug_js: "//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/biz_wap/debug/console5e513c.js",
+  safe_js: "//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/biz_wap/safe/moonsafe5e513c.js",
+  res_list: []
+};
+</script>
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+(function () {
+  var totalCount = 0,
+    finishCount = 0;
+
+  function _loadVConsolePlugin() {
+    window.vConsole = new window.VConsole();
+    while (window.vConsolePlugins.length > 0) {
+      var p = window.vConsolePlugins.shift();
+      window.vConsole.addPlugin(p);
+    }
+    // 视频落地页h5有时候不会触发onload事件，导致vConsole无法渲染，这里手动强制渲染vConsole @baakqiu
+    if (!window.vConsole.isInited) {
+      window.vConsole._render();
+      window.vConsole._mockTap();
+      window.vConsole._bindEvent();
+      window.vConsole._autoRun();
+    }
+  }
+
+  function _addVConsole(uri, cb) {
+    totalCount++;
+    var node = document.createElement('SCRIPT');
+    node.type = 'text/javascript';
+    node.src = uri;
+    node.setAttribute('nonce', '1686712402');
+    if (cb) {
+      node.onload = cb;
+    }
+    document.getElementsByTagName('head')[0].appendChild(node);
+  }
+  if (
+    (document.cookie && document.cookie.indexOf('vconsole_open=1') > -1)
+    || location.href.indexOf('vconsole=1') > -1
+  ) {
+    window.vConsolePlugins = [];
+    _addVConsole('//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/vconsole/3.2.2/vconsole.min5e513b.js', function () {
+      // _addVConsole('plugin/vconsole-sources/1.0.1/vconsole-sources.min.js');
+      _addVConsole('//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/vconsole/plugin/vconsole-mpopt/1.0.1/vconsole-mpopt5e513b.js', _loadVConsolePlugin);
+    });
+  }
+
+  // // 广告iframe预加载
+  try {
+    var adIframeUrl = localStorage.getItem('__WXLS_ad_iframe_url');
+    if (window === top) {
+      if (adIframeUrl) {
+        if (navigator.userAgent.indexOf('iPhone') > -1) {
+          var img = new Image();
+          img.src = adIframeUrl;
+        } else {
+          var link = document.createElement('link');
+          link.rel = 'prefetch';
+          link.href = adIframeUrl;
+          document.getElementsByTagName('head')[0].appendChild(link);
+        }
+      }
+    }
+  } catch (err) {
+
+  }
+
+})();
+</script>
+    
+    
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+if (!!window.__initCatch) {
+  window.__initCatch({
+    idkey: 66881,
+    startKey: 30,
+    limit: 10,
+    reportOpt: {
+      uin: "",
+      biz: "",
+      mid: "",
+      idx: ""
+    }
+  });
+}
+// 评论数据上报
+window.pageCommentReportData = {
+  scene : 3, // 图片分享页
+  idkey : 66881,
+  moreList : 31, // 加载第二页或以上的留言列表次数
+  errList : 32, // 加载评论列表失败
+  addCommentErr : 33, // 发表评论失败
+  // 加载我的评论失败
+  errComment : 34
+};
+window.cgiData = {
+  nick_name: "邑安全",
+  round_head_img : "http://mmbiz.qpic.cn/mmbiz_png/1N39PtINn8uVmv7llchCht5wibibKgialViaiaia9PzqHBQ837vUgK3Z6ue6bVqp6GKyUJR9bfjL3Gomh7apWvdmuXmQ/0?wx_fmt=png",
+  user_name: "gh_23ba87d75c01",
+};
+window.new_appmsg = 1;
+</script>
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+window.__createXmlGetter = function genGlobalDataGetters(xml, params) {
+  return function getXmlValue(path) {
+    var isParam = true;
+    if (path.slice(-5) === '.DATA') {
+      path = path.slice(0, -5);
+      isParam = false;
+    }
+    if (isParam) { if (!params || typeof params !== 'object') return ''; }
+    else if (!xml || typeof xml !== 'object') return '';
+    for (var v = isParam ? params : xml, i = 0, p = path.split('.'); i < p.length; i++) {
+      v = v[p[i]];
+      if (v == null) { // null或者undefined
+        return '';
+      }
+    }
+    if (typeof v === 'object') {
+      return v;
+    }
+    return v + '';
+  };
+}
+</script>
+
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+//定义 window.cgiData 相关变量
+window.__initCgiDataConfig = function __initGlobalData(xml, params) {
+  var getXmlValue = window.__createXmlGetter(xml, params);
+  (function(_g){
+    _g.cgiData = _g.cgiData || {};
+    var d = _g.cgiData;
+    d.enterid = xml ? getXmlValue('enterid') * 1 || 0 : '' * 1 || 0; // 标识同一次进入视频落地页的Id
+    d.scene = xml ? getXmlValue('scene') * 1 || 0 : '' * 1 || 0; // 图文定义的页面来源 详见 10377协议
+    d.subscene = xml ? getXmlValue('subscene') * 1 || 0 : '' * 1 || 0; // 定义子来源 目前是长度bar
+    d.isDemo = xml ? getXmlValue('is_demo.DATA') * 1 : '' * 1;
+    d.page_type = xml ? getXmlValue('page_type.DATA') * 1 : '2' * 1; // 1:详情页 2:分享页
+    d.create_time = xml ? getXmlValue('ori_create_time.DATA') * 1 : '1654236019' * 1; // 发布时间，unix时间戳
+    d.ct = xml ? getXmlValue('ori_create_time.DATA') : '1654236019';
+    d.ct_str = xml ? getXmlValue('create_time.DATA') : '2022-06-03 14:00'; // 发布时间字符串，如2020-11-19
+    d.article_link = xml ? getXmlValue('article_link.DATA') : ''; // 原文链接，详情页才有
+    d.article_title = xml ? getXmlValue('article_title.DATA') : ''; // 原文标题，详情页才有
+    d.comment_id = xml ? getXmlValue('comment_id.DATA') : '0';
+    d.open_fansmsg = xml ? getXmlValue('open_fansmsg.DATA') * 1 : '1' * 1;
+    d.title = xml ? getXmlValue('title.DATA') : '邑安科技安全团队祝您2022年端午安康！';
+    d.nick_name = xml ? getXmlValue('nick_name.DATA') : '邑安全'; // 公众号昵称
+    d.cover = xml ? getXmlValue('cdn_url.DATA') : 'https://mmbiz.qpic.cn/mmbiz_jpg/1N39PtINn8tzZz6wDdApmgGj6uIPwhVN0SjibvTqfjfBzchyBiaziabwYoYvicVU6D1icW6wNmicq2h6tYBvKtg6FnJA/0?wx_fmt=jpeg'; // 封面
+    d.cdn_1_1_img = xml ? getXmlValue('cdn_url_1_1.DATA') : 'https://mmbiz.qpic.cn/mmbiz_jpg/1N39PtINn8tzZz6wDdApmgGj6uIPwhVN0SjibvTqfjfBzchyBiaziabwYoYvicVU6D1icW6wNmicq2h6tYBvKtg6FnJA/0?wx_fmt=jpeg'; // 1:1封面资源
+    d.round_head_img = xml ?
+      getXmlValue('round_head_img.DATA') || 'http://mmbiz.qpic.cn/mmbiz/a5icZrUmbV8p5jb6RZ8aYfjfS2AVle8URwBt8QIu6XbGewB9wiaWYWkPwq4R7pfdsFibuLkic16UcxDSNYtB8HnC1Q/0' :
+      'http://mmbiz.qpic.cn/mmbiz_png/1N39PtINn8uVmv7llchCht5wibibKgialViaiaia9PzqHBQ837vUgK3Z6ue6bVqp6GKyUJR9bfjL3Gomh7apWvdmuXmQ/0?wx_fmt=png' || 'http://mmbiz.qpic.cn/mmbiz/a5icZrUmbV8p5jb6RZ8aYfjfS2AVle8URwBt8QIu6XbGewB9wiaWYWkPwq4R7pfdsFibuLkic16UcxDSNYtB8HnC1Q/0'; // 公众号圆形头像
+    d.hd_head_img = xml ? getXmlValue('hd_head_img.DATA') || '' : 'http://wx.qlogo.cn/mmhead/Q3auHgzwzM7Xyb0sIaiar1kQBsazibg8RED0NT32Z628HvhdmptmIibww/0' || ''; // 公众号高清头像
+    d.biz = xml ? getXmlValue('bizuin.DATA') || getXmlValue('__biz') : 'MzUyMzczNzUyNQ==' || '';
+    d.sn = xml ? getXmlValue('sn.DATA') || getXmlValue('sn') || getXmlValue('sign') : '' || '' || '';
+    d.mid = xml ? getXmlValue('mid.DATA') || getXmlValue('mid') || getXmlValue('appmsgid') : '2247515077' || '' || '';
+    d.idx = xml ? getXmlValue('idx.DATA') || getXmlValue('idx') || getXmlValue('itemidx') : '1' || '' || '';
+    d.tempkey = xml ? getXmlValue('tempkey') : '';
+    d.is_temp_url = (xml ? getXmlValue('tempkey') : '') ? 1 : 0;
+    d.read_num = xml ? getXmlValue('appmsgstat.read_num.DATA') * 1 : '' * 1;
+    d.like_num = xml ? getXmlValue('appmsgstat.like_num.DATA') * 1 : '' * 1;
+    d.liked = (xml ? getXmlValue('appmsgstat.liked.DATA') : '') == 'true' ? true : false;
+    d.msg_link = xml ? getXmlValue('link.DATA') : '';
+    d.req_id = xml ? getXmlValue('req_id.DATA') : '0319fAA9ZaAysdHKkDjCcV0t';
+    d.msg_daily_idx = xml ? getXmlValue('msg_daily_idx.DATA') : '1';
+    d.is_only_read = xml ? getXmlValue('is_only_read.DATA') * 1 : '1' * 1;
+    d.send_time = xml ? getXmlValue('send_time.DATA') : '';//临时链接时，发送时间
+    d.ori_send_time = xml ? getXmlValue('ori_send_time.DATA') : '1654236019'; //非临时链接时的发送时间
+    d.abtest_cookie = xml ? getXmlValue('abtest_cookie') : '';
+    d.devicetype = xml ? getXmlValue('devicetype') : '';
+    d.version = xml ? getXmlValue('version') : '';
+    d.user_name = xml ? getXmlValue('user_name.DATA') : 'gh_23ba87d75c01';
+    d.nick_name = xml ? getXmlValue('nick_name.DATA') : '邑安全';
+    d.malicious_title_reason_id = xml ? getXmlValue('malicious_title_reason_id.DATA') : '0'; // 20012低俗，90041夸大误导
+    d.malicious_content_type = xml ? getXmlValue('malicious_content_type.DATA') : '0'; // 0：标题；1：摘要；2：正文
+    d.svr_time = xml ? getXmlValue('svr_time.DATA') * 1 : '1654255176' * 1; // 服务器uinx时间戳
+    d.is_need_reward = xml ? getXmlValue('can_reward.DATA') * 1 : '0' * 1; // 是否需要赞赏
+    d.author_id = xml ? getXmlValue('author_id.DATA') : ''; // 作者id
+  })(window);
+};
+
+window.ip_wording = {
+  countryName: '中国',
+  countryId: '156',
+  provinceName: '广东',
+  provinceId: '',
+  cityName: '',
+  cityId: ''
+};
+window.show_ip_wording = '1' * 1;
+window.__initCgiDataConfig();
+</script>
+
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+//定义 window相关变量
+window.__initCommentConfig = function __initGlobalData(xml, params) {
+  var getXmlValue = window.__createXmlGetter(xml, params);
+  (function(_g){
+    _g.cgiData = _g.cgiData || {};
+    var cgiData = _g.cgiData;
+    //播放组件使用的空白音频
+    _g._empty_v = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/pages/voice/empty5e513b.mp3';
+    //兼容论坛的组件 appmsg/comment.js
+    _g.comment_edit_icon = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/icon_edit5e513b.png';
+    _g.comment_loading_img = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/common/icon_loading_white5e513b.gif';
+    _g.comment_id = cgiData.comment_id;
+    _g.appmsgid = cgiData.mid;
+    _g.mid = cgiData.mid;
+    _g.biz = cgiData.biz;
+    _g.idx = cgiData.idx;
+    _g.sn = cgiData.sn;
+    _g.appmsgid = xml ? getXmlValue('mid.DATA') || getXmlValue('appmsgid') || getXmlValue('mid') : '2247515077' || '' || '';
+    _g.itemidx = xml ? getXmlValue('idx.DATA') || getXmlValue('itemidx') || getXmlValue('idx') : '1' || '' || '';
+    _g.pass_ticket = xml ? getXmlValue('pass_ticket') : '';
+    _g.msg_title = cgiData.title;
+    _g.icon_emotion_switch = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch5e513b.svg';
+    _g.icon_emotion_switch_active = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_active5e513b.svg';
+    _g.icon_emotion_switch_primary = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_primary5e513b.svg';
+    _g.icon_emotion_switch_active_primary = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/appmsg/emotion/icon_emotion_switch_active_primary5e513b.svg';
+    _g.scene = xml ? getXmlValue('scene') * 1 || 0 : '' * 1 || 0; // 广告需要
+    _g.is_temp_url = (xml ? getXmlValue('tempkey') : '') ? 1 : 0; // 广告需要
+    _g.icon_loading_white = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/icon/common/icon_loading_white5e513b.gif';
+    _g.item_show_type = xml ? getXmlValue('item_show_type.DATA') : '8';
+    _g.real_item_show_type = xml ? getXmlValue('real_item_show_type.DATA') : '8';
+    _g.source = xml ? getXmlValue('scene') : '';//用于appmsgreport,详见appmsg\appmsg_report.js
+    _g.ascene = xml ? getXmlValue('ascene') : '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.req_id = xml ? getXmlValue('req_id.DATA') : '0319fAA9ZaAysdHKkDjCcV0t';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.subscene = xml ? getXmlValue('subscene') : '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.user_uin = xml ? getXmlValue('user_uin.DATA') : '0';
+    _g.friend_read_source = xml ? getXmlValue('source') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.friend_read_version = xml ? getXmlValue('recommend_version') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.friend_read_class_id = xml ? getXmlValue('class_id') || '' : '' || '';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.ct = xml ? getXmlValue('ori_create_time.DATA') : '1654236019';//用于appmsgreport，详见appmsg\appmsg_report.js
+    _g.networkType = ''; // 网络状态，同过JSAPI获取网络状态
+    _g.can_see_complaint = xml ? getXmlValue('can_see_complaint.DATA') : '0'; // 广告投诉
+    _g.isprofileblock = xml ? getXmlValue('isprofileblock.DATA') * 1 : '0' * 1; // 限制跳转到公众号profile @radeonwu
+    _g.sessionid = xml ? getXmlValue('sessionid') || getXmlValue('base_resp.base_resp.sessionid.DATA') : ''||'svr_ae50c190a08'; // sessionid，与图文一致，用于上报
+    _g.new_appmsg = 1; // 留言使用新版样式
+    _g.comment_c2c_not_support_img = '//res.wx.qq.com/mmbizwap/zh_CN/htmledition/images/pic/appmsg/pic_discuss_more5e513b.png'; // C2C更新教育图片
+    _g.scList = '' * 1;
+    _g.scType = '' * 1;
+  })(window);
+
+  //先把页面底色设置成白色，后续判断有评论和历史消息时，才干掉
+  (function(){
+    var bodyClassName = document.body.className || '';
+    if(bodyClassName.indexOf('rich_media_empty_extra')==-1){
+      bodyClassName += ' rich_media_empty_extra';
+    }
+    document.body.className = bodyClassName;
+  })();
+}
+window.__initCommentConfig();
+</script>
+
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+  window.real_show_page_time = +new Date();
+  if (!!window.addEventListener){
+    window.addEventListener('load', function(){
+      window.onload_endtime = +new Date();
+    });
+  }
+</script>
+
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+(function(_g){
+    _g.appmsg_like_type = "2" * 1 ? "2" * 1 : 1;
+    // _g.appmsg_like_type = 2;
+    _g.clientversion = "";
+    _g.passparam = ""; // 看一看带参数
+    if(!_g.msg_link) {
+      _g.msg_link = "";
+    }
+    _g.appmsg_type = "9"; // 后台图文消息类型
+    _g.devicetype = ""; // devicetype
+})(window);
+// 已翻译
+</script>
+
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+window.name = "邑安全";
+window.desc = "邑安科技安全团队祝您2022年端午安康！".replace(/\r/g, '').replace(/\n/g, '<br>').replace(/\s/g, '&nbsp;');
+</script><script type="text/javascript" nonce="1686712402" reportloaderror>var __INLINE_SCRIPT__=function(){"use strict";var n=function(n){var i=document.getElementById("js_ip_wording_wrp"),o=document.getElementById("js_ip_wording");if(n&&(window.ip_wording={countryName:n.country_name,countryId:n.country_id,provinceName:n.province_name}),window.ip_wording&&i&&o){var r=function(n){var i="";return 156===parseInt(n.countryId,10)?i=n.provinceName:n.countryId&&(i=n.countryName),i}(window.ip_wording);""!==r&&(o.innerHTML=r,i.style.display="inline-block")}};return window.__second_open__||(n(),window.__setIpWording=n),n}();</script>
+
+<script nomodule nonce="1686712402" reportloaderror>new Image().src='https://mp.weixin.qq.com/mp/jsmonitor?idkey=66881_111_1&t='+Math.random();</script>
+
+    
+
+<script nomodule nonce="1686712402" reportloaderror>!function(){var e=document,t=e.createElement("script");if(!("noModule"in t)&&"onbeforeload"in t){var n=!1;e.addEventListener("beforeload",(function(e){if(e.target===t)n=!0;else if(!e.target.hasAttribute("nomodule")||!n)return;e.preventDefault()}),!0),t.type="module",t.src=".",e.head.appendChild(t),t.remove()}}();</script>
+<script nomodule id="vite-legacy-polyfill" src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/polyfills-legacy.ce1f5856.js" nonce="1686712402" reportloaderror></script>
+<script nomodule id="vite-legacy-entry" src="https://images.weserv.nl/?url=//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/../mmbizappmsg/assets/common_share_image-legacy.71e073e8.js" nonce="1686712402" reportloaderror>System.import(document.getElementById('vite-legacy-entry').getAttribute('data-src'))</script>
+
+    <link rel="stylesheet" type="text/css" href="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/style/page/appmsg_new/mod/weui_a11y5e513c.css" reportloaderror>
+<script type="text/javascript" src="//res.wx.qq.com/mmbizwap/zh_CN/htmledition/js/lib/wa-helper.min5e513c.js" nonce="1686712402" reportloaderror></script>
+<script type="text/javascript" nonce="1686712402" reportloaderror>
+  // WAH.default.init()
+</script>
+
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_colon">：</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_comma">，</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_period">。</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_space">&nbsp;</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_video">视频</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_weapp">小程序</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_txt">赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_tips">，轻点两下取消赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_txt">在看</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_tips">，轻点两下取消在看</span>
+
+  </body>
+</html>
+
+
