@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html class="">
+  <head>
+    <meta name="wechat-enable-text-zoom-em" content="true">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=0,viewport-fit=cover">
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="format-detection" content="telephone=no">
+<script  nonce="" reportloaderror>try{document.getElementsByTagName('html').item(0).style.webkitTextSizeAdjust=JSON.parse(window.__wxWebEnv.getEnv()).fontScale+'%'}catch(e){}</script>
+<script type="text/javascript" nonce="" reportloaderror>
+  window.logs = { pagetime: {} };
+  window.logs.pagetime['html_begin'] = (+new Date());
+  window.LANG = "zh_CN"; // 页面语言 zh_CN en_US
+</script>
+
+    <script type="text/javascript" nonce="" reportloaderror>
+/**
+ * 于2022-02-21重构vite
+ * 仅保留原有moon.js中上报相关的部分
+ * @author baakqiu
+ * @date 2022-02-21
+ */
+
+var WX_BJ_REPORT = window.WX_BJ_REPORT || {};
+(function(_) {
+  if (_.BadJs) {
+    return;
+  }
+  //onerror上报名 
+  var BADJS_WIN_ERR = 'BadjsWindowError';
+  var extend = function(source, destination) {
+    for (var property in destination) {
+      source[property] = destination[property]
+    }
+    return source
+  }
+  /*
+    出错上报字段:mid name key  msg  stack file col line uin
+    mid 模块名
+    name 监控名
+    key 特征值
+    msg 额外信息
+  */
+  _.BadJs = {
+    uin: 0,
+    mid: "",
+    view: "wap",
+    _cache: {}, //上报_cache 同一mid name key 只会上报一次
+    _info: {}, // 打点记录 会写入msg帮助定位
+    _hookCallback: null,
+    ignorePath: true,
+    throw: function(e, extData) {
+      this.onError(e, extData);
+      throw e;
+    },
+    //接收异常并上报处理 如果有额外信息可以放在第二个参数_data中
+    // _data 只能覆盖上报协议的字段mid （name,key 不建议通过data覆盖） msg  stack file col line uin
+    onError: function(e, extData) {
+      try {
+        //标记已执行的throw
+        if (e.BADJS_EXCUTED == true) {
+          return;
+        }
+        e.BADJS_EXCUTED = true;
+        var data = errToData(e);
+        data.uin = this.uin;
+        data.mid = this.mid;
+        data.view = this.view;
+        data.cmdb_module = 'mmbizwap';
+        //data.msg = msg || data.msg;
+        if (!!extData) {
+          data = extend(data, extData);
+        }
+        //如果cid存在 将cid合并到key
+        if (data.cid) {
+          data.key = "[" + data.cid + "]:" + data.key;
+        }
+        
+        if (data._info) {
+          if (Object.prototype.toString.call(data._info) == "[object Object]") {
+            data.msg += " || info:" + JSON.stringify(data._info);
+          } else if (Object.prototype.toString.call(data._info) == "[object String]") {
+            data.msg += " || info:" + data._info;
+          } else {
+            data.msg += " || info:" + data._info;
+          }
+        }
+        if (typeof this._hookCallback == "function") {
+          if (this._hookCallback(data) === false) {
+            return
+          }
+        }
+        this._send(data);
+        return _.BadJs;
+      } catch (e) {
+        console.error(e);
+      }
+    },
+    winErr: function(event) {
+      if (event.error && event.error.BADJS_EXCUTED) {
+        return;
+      }
+      if (event.type === 'unhandledrejection') {
+        _.BadJs.onError(createError(event.type, event.reason, "", "", "", event.reason));
+      }else{
+        _.BadJs.onError(createError(BADJS_WIN_ERR, event.message, event.filename, event.lineno, event.colno, event.error));
+      }
+    },
+    init: function(uin, mid, view) {
+      this.uin = uin || this.uin;
+      this.mid = mid || this.mid;
+      this.view = view || this.view;
+      return _.BadJs;
+    },
+    //钩子函数
+    hook: function(fn) {
+      this._hookCallback = fn;
+      return _.BadJs;
+    },
+    _send: function(data) {
+      //hack uin mid
+      if (!data.mid) {
+        if (typeof window.PAGE_MID !== 'undefined' && window.PAGE_MID) {
+          data.mid = window.PAGE_MID;
+        } else {
+          return;
+        }
+      }
+      if (!data.uin) {
+        data.uin = window.user_uin || 0;
+      }
+      // 发送要去重 
+      var flag = [data.mid, data.name, data.key].join("|");
+      if (this._cache && this._cache[flag]) {
+        return
+      } else {
+        this._cache && (this._cache[flag] = true);
+        this._xhr(data);
+      }
+      return _.BadJs;
+    },
+    _xhr: function(data) {
+      //console.log(data);
+      var xmlobj;
+      if (window.ActiveXObject) {
+        try {
+          xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+        } catch (e) {
+          try {
+            xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+          } catch (E) {
+            xmlobj = false;
+          }
+        }
+      } else if (window.XMLHttpRequest) {
+        xmlobj = new XMLHttpRequest();
+      }
+      var param = "";
+      for (var key in data) {
+        if (key && data[key]) {
+          param += [key, "=", encodeURIComponent(data[key]), "&"].join("");
+        }
+      }
+      if (xmlobj && typeof xmlobj.open == "function") {
+        xmlobj.open("POST", "https://badjs.weixinbridge.com/report", true);
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+        xmlobj.onreadystatechange = function(status) {};
+        xmlobj.send(param.slice(0, -1));
+      } else {
+        var img = new Image();
+        img.src = "https://badjs.weixinbridge.com/report?" + param;
+      }
+    },
+    // key是特征值 默认上报msg就是key，也可以主动传msg包含更多上报信息 
+    report: function(name, key, data) {
+      this.onError(createError(name, key), data);
+      return this;
+    },
+    // 打点标记
+    mark: function(info) {
+      this._info = extend(this._info, info);
+    },
+    nocache: function() {
+      this._cache = false;
+      return _.BadJs;
+    }
+  }
+  function createError(name, msg, url, line, col, error) {
+    return {
+      name: name || "",
+      message: msg || "",
+      file: url || "",
+      line: line || "",
+      col: col || "",
+      stack: (error && error.stack) || "",
+    }
+  }
+  //将异常错误转换成上报协议支持的字段
+  /*
+  * 先取e对象上的file line col等字段
+  * 再解析e.statck
+  * name 错误大类 默认取badjs_try_err|badjs_win_err
+  * key  错误标识 e.message
+  * msg  错误信息 e.message
+  * stack 错误堆栈 e.stack
+  * file 错误发生的文件
+  * line 行
+  * col 列
+  * client_version
+  */
+  function errToData(e) {
+    var _stack = parseStack(e);
+    return {
+      name: e.name,
+      key: e.message,
+      msg: e.message,
+      stack: _stack.info,
+      file: _stack.file,
+      line: _stack.line,
+      col: _stack.col,
+      client_version: "",
+      _info: e._info
+    }
+  }
+  function parseStack(e) {
+    e._info = e._info || ""; // 当前错误的额外信息 最终上报到info
+    var stack = e.stack || "";
+    var _stack = {
+      info: stack,
+      file: e.file || "",
+      line: e.line || "",
+      col: e.col || "",
+    };
+    if (_stack.file == "") {
+      // 提取file line col
+      var stackArr = stack.split(/\bat\b/);
+      if (stackArr && stackArr[1]) {
+        var match = /(https?:\/\/[^\n]+)\:(\d+)\:(\d+)/.exec(stackArr[1]);
+        if (match) {
+          //若stack提取的file line col跟e中的属性不一致，以stack为准 但在e._info中记录原始数据
+          if (match[1] && match[1] != _stack.file) {
+            _stack.file && (e._info += " [file: " + _stack.file + " ]");
+            _stack.file = match[1];
+          }
+          if (match[2] && match[2] != _stack.line) {
+            _stack.line && (e._info += " [line: " + _stack.line + " ]");
+            _stack.line = match[2];
+          }
+          if (match[3] && match[3] != _stack.col) {
+            _stack.col && (e._info += " [col: " + _stack.col + " ]");
+            _stack.col = match[3];
+          }
+        }
+      }
+    }
+    //替换堆栈中的文件路径 combojs太长
+    if (_stack && _stack.file && _stack.file.length > 0) {
+      _stack.info = _stack.info.replace(new RegExp(_stack.file.split("?")[0], "gi"), "__FILE__")
+    }
+    //堆栈路径只保存文件名
+    if (_.BadJs.ignorePath) {
+      _stack.info = _stack.info.replace(/http(s)?\:[^:\n]*\//ig, "").replace(/\n/gi, "");
+    }
+    return _stack;
+  }
+  //兜底方法
+  window.addEventListener && window.addEventListener('error', _.BadJs.winErr);
+  window.addEventListener && window.addEventListener('unhandledrejection', _.BadJs.winErr);
+  return _.BadJs;
+})(WX_BJ_REPORT);
+window.WX_BJ_REPORT = WX_BJ_REPORT;
+/**
+ * 兼容wap项目的简单CMD管理
+ * 所有wap项目必须包含此文件才可以执行成功
+ * 暴露在全局的变量仍然以seajs为命名空间，跟web项目保持一致
+ * 支持的API是seajs.use，以及require define
+ * @author raphealguo
+ * @date 20140326
+ */
+function __moonf__() {
+  if (window.__moonhasinit) return;
+  window.__moonhasinit = true;
+  window.__moonclientlog = []; // moon中存到客户端日志里面的内容，最终写入到客户端的地点在fereport.js
+  if (typeof JSON != "object") { //针对IE7的hack
+    window.JSON = {
+      stringify: function() { return ""; },
+      parse: function() { return {}; }
+    };
+  }
+  var moon_init = function() {
+    // 前端的@cunjinli
+    (function() {
+      // @cunjinli 重写alert函数, moonsafe监控
+      var _alert = window.alert;
+      window.__alertList = [];
+      window.alert = function(msg) {
+        _alert(msg);
+        window.__alertList.push(msg);
+      };
+    })();
+    /**
+     * moonsafe @cunjinli 加在这里
+     */
+    (function() {
+      // if (window.__nonce_str) {
+      //   var __old_createElement = document.createElement;
+      //   document.createElement = function(tagName) {
+      //     var node = __old_createElement.apply(this, arguments);
+      //     if (typeof tagName == 'object') {
+      //       tagName = tagName.toString();
+      //     }
+      //     if (typeof tagName == 'string' && tagName.toLowerCase() == 'script') {
+      //       node.setAttribute("nonce", window.__nonce_str);
+      //     }
+      //     return node;
+      //   }
+      // }
+      if (window.addEventListener && window.__DEBUGINFO && Math.random() < 0.01) {
+        window.addEventListener("load", function() {
+          var node = document.createElement('script');
+          node.src = __DEBUGINFO.safe_js;
+          node.type = 'text/javascript';
+          node.async = true;
+          var head = document.head || (document.getElementsByTagName("head")[0]);
+          head.appendChild(node);
+        });
+      }
+    })();
+    /**
+     * mooncatch
+     * 对各种异步回调都使用try catch错误上报
+     * @radeonwu raphealguo
+     */
+    (function() {
+      var inWx = (/MicroMessenger/i).test(navigator.userAgent);
+      var inMp = (/MPAPP/i).test(navigator.userAgent);
+      var _idkey = 121261; //上报的idkey 添加默认上报值
+      var _startKey; //开始的key
+      var _limit; //上报的key的长度
+      var _badjsId;
+      var _reportOpt; //上报的额外信息
+      var _extInfo; //附加的预留字段，如网络采样率采样率network_rate， 总体上报率rate
+      var MOON_LISTENER_ERROR_KEY_OFFSET = 2; //addEventListener上报时的偏移量为2
+      var MOON_AJAX_NETWORK_OFFSET = 4; //network错误时的上报偏移量为4，这里在ajax.js中上报，这里需要加入采样率
+      var MOON_ASYNC_ERROR_KEY_OFFSET = 9; //setTimeout和setInterval上报时的偏移量为9
+      var MOON_LOCALSTORAGE_ERROR_KEY_OFFSET = 10; //localstorage.setItem失败时的偏移量为10
+      window.__initCatch = function(opt) {
+        _idkey = opt.idkey;
+        _startKey = opt.startKey || 0;
+        _limit = opt.limit;
+        _badjsId = opt.badjsId;
+        _reportOpt = opt.reportOpt || "";
+        _extInfo = opt.extInfo || {};
+        _extInfo.rate = _extInfo.rate || 0.5;
+      }
+      //暴露的上报函数，供core.js和ajax.js上报错误使用，array = [{offset:MOON_JSAPI_KEY_OFFSET, log:"ready", e:e}]
+      window.__moon_report = function(array, rate_opt) {
+        var isAcrossOrigin = false;
+        var href = '';
+        try {
+          href = top.location.href;
+        } catch (e) {
+          isAcrossOrigin = true;
+        }
+        var rate = 0.5;
+        if (!!_extInfo && !!_extInfo.rate) {
+          rate = _extInfo.rate;
+        }
+        if (!!rate_opt && (typeof rate_opt == 'number')) {
+          rate = rate_opt;
+        }
+        if (
+          (!(/mp\.weixin\.qq\.com/).test(location.href) && !(/payapp\.weixin\.qq\.com/).test(location.href)) ||
+          Math.random() > rate ||
+          !(inWx || inMp) ||
+          (top != window && !isAcrossOrigin && !(/mp\.weixin\.qq\.com/).test(href))
+        ) {
+          //return ;
+        }
+        if (isObject(array))
+          array = [array];
+        if (!isArray(array) || _idkey == '')
+          return;
+        var data = "";
+        var log = []; //存放array中每个对象关联的log
+        var key = []; //存放array中每个上报的key
+        var val = []; //存放array中每个上报的value
+        var idkey = [];
+        //如果这里没有opt.limit，直接上报到startKey
+        if (typeof _limit != "number") {
+          _limit = Infinity;
+        }
+        for (var i = 0; i < array.length; i++) {
+          var item = array[i] || {};
+          if (item.offset > _limit) continue; //上报的偏移量超过limit
+          if (typeof item.offset != "number") continue;
+          if (item.offset == MOON_AJAX_NETWORK_OFFSET && !!_extInfo && !!_extInfo.network_rate && Math.random() >= _extInfo.network_rate) {
+            continue;
+          }
+          //log[i] = item.log || "";
+          var k = _limit == Infinity ? _startKey : (_startKey + item.offset);
+          log[i] = (("[moon]" + _idkey + "_" + k + ";") + item.log + ";" + getErrorMessage(item.e || {})) || "";
+          key[i] = k;
+          val[i] = 1;
+        }
+        for (var j = 0; j < key.length; j++) {
+          idkey[j] = _idkey + "_" + key[j] + "_" + val[j];
+          data = data + "&log" + j + "=" + log[j];
+        }
+        if (idkey.length > 0) {
+          // sendReport("idkey=" + idkey.join(";") + "&lc=" + log.length + data);
+          sendReport("POST", location.protocol + '//mp.weixin.qq.com/mp/jsmonitor?', "idkey=" + idkey.join(";") + "&r=" + Math.random() + "&lc=" + log.length + data);
+          // 把图文消息的错误上报一份到badjs，只支持get请求
+          // 这里由于量比较大，把badjs的内层怼爆了，这里加多一个采样，并且去掉用户的信息
+          var rate = 1;
+          if (_extInfo && _extInfo.badjs_rate) { // 初始化时的badjs采样率
+            rate = _extInfo.badjs_rate;
+          }
+          if (Math.random() < rate) {
+            data = data.replace(/uin\:(.)*\|biz\:(.)*\|mid\:(.)*\|idx\:(.)*\|sn\:(.)*\|/, '');
+            if(!!_badjsId){
+              var _img = new Image();
+              var _src = 'https://badjs.weixinbridge.com/badjs?id=' + _badjsId + '&level=4&from=' + encodeURIComponent(location.host) + '&msg=' + encodeURIComponent(data);
+              _img.src = _src.slice(0, 1024);
+            }
+            // badjs同时报一份到新监控 
+            if (typeof WX_BJ_REPORT != "undefined" && WX_BJ_REPORT.BadJs) {
+              for (var i = 0; i < array.length; i++) {
+                var item = array[i] || {};
+                if (item.e) {
+                  WX_BJ_REPORT.BadJs.onError(item.e,{_info:item.log});
+                } else {
+                  var name = /[^:;]*/.exec(item.log)[0];
+                  WX_BJ_REPORT.BadJs.report(name, item.log, { mid: "mmbizwap:Monitor" });
+                }
+              }
+            }
+          } else {
+            //虽然采样没有执行 但实际是有被BadJs.onError，置位一下
+            for (var i = 0; i < array.length; i++) {
+              var item = array[i] || {};
+              if (item.e) {
+                item.e.BADJS_EXCUTED = true;
+              }
+            }
+          }
+        }
+      }
+      function isArray(obj) { //判断输入是否为数组
+        return Object.prototype.toString.call(obj) === '[object Array]';
+      }
+      function isObject(obj) { //判断输入是否为对象
+        return Object.prototype.toString.call(obj) === '[object Object]';
+      }
+      function getErrorMessage(e) {
+        var stack = e.stack + ' ' + e.toString() || ""; //错误堆栈信息
+        try {
+          //先取出res域名
+          if (!window.testenv_reshost) {
+            stack = stack.replace(/http(s)?:\/\/res\.wx\.qq\.com/g, "");
+          } else {
+            var host = 'http(s)?://' + window.testenv_reshost;
+            var reg = new RegExp(host, 'g');
+            stack = stack.replace(reg, "");
+          }
+          //提取最后一个.js前边的
+          var reg = /\/([^.]+)\/js\/(\S+?)\.js(\,|:)?/g;
+          while (reg.test(stack)) {
+            // stack = stack.replace(reg, "3"); 解决$问题
+            stack = stack.replace(reg, function(a, b, c, d, e, f) {
+              return c + d
+            });
+          }
+        } catch (e) {
+          stack = e.stack ? e.stack : "" //错误堆栈信息
+        }
+        var ret = [];
+        for (o in _reportOpt) {
+          if (_reportOpt.hasOwnProperty(o)) {
+            ret.push(o + ":" + _reportOpt[o]);
+          }
+        }
+        ret.push("STK:" + stack.replace(/\n/g, ""));
+        return ret.join("|");
+      }
+      function sendReport(type, url, data) { //post方法用于提交数据
+        if (!/^mp\.weixin\.qq\.com$/.test(location.hostname)) { //非MP域名使用 img方式上报
+          var tmp = [];
+          data = data.replace(location.href, (location.origin || "") + (location.pathname || "")).replace("#wechat_redirect", "").replace("#rd", "").split("&");
+          for (var i = 0, il = data.length; i < il; i++) {
+            var a = data[i].split("=");
+            if (!!a[0] && !!a[1]) {
+              tmp.push(a[0] + "=" + encodeURIComponent(a[1]));
+            }
+          }
+          var _img = new window.Image();
+          _img.src = (url + tmp.join("&")).substr(0, 1024);
+          return;
+        }
+        var xmlobj; //定义XMLHttpRequest对象  
+        if (window.ActiveXObject) { //如果当前浏览器支持Active Xobject，则创建ActiveXObject对象    
+          try {
+            xmlobj = new ActiveXObject("Msxml2.XMLHTTP");
+          } catch (e) {
+            try {
+              xmlobj = new ActiveXObject("Microsoft.XMLHTTP");
+            } catch (E) {
+              xmlobj = false;
+            }
+          }
+        } else if (window.XMLHttpRequest) { //如果当前浏览器支持XMLHttpRequest，则创建XMLHttpRequest对象  
+          xmlobj = new XMLHttpRequest();
+        }
+        if (!xmlobj) return;
+        //xmlobj.open("POST", location.protocol + "//mp.weixin.qq.com/mp/jsmonitor?", true);         
+        xmlobj.open(type, url, true);
+        xmlobj.setRequestHeader("cache-control", "no-cache");
+        xmlobj.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8"); //设置请求头信息              
+        xmlobj.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+        xmlobj.send(data); //发送数据  
+      }
+      function catTimeout(foo) {
+        return function(cb, timeout) {
+          if (typeof cb === 'string') {
+            try {
+              cb = new Function(cb);
+            } catch (err) {
+              throw err;
+            }
+          }
+          var args = [].slice.call(arguments, 2);
+          var _cb = cb;
+          cb = function() {
+            try {
+              return _cb.apply(this, (args.length && args) || arguments);
+            } catch (error) {
+              if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                console.error("[TryCatch]" + error.stack);
+              }
+              if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                //sendReport(error);
+                window.__moon_report([{ offset: MOON_ASYNC_ERROR_KEY_OFFSET, log: "timeout_error;host:" + location.host, e: error }]);
+                //breakOnError(timeoutkey);
+              }
+              throw error;
+            }
+          }
+          return foo(cb, timeout);
+        };
+      };
+      window.setTimeout = catTimeout(window.setTimeout);
+      window.setInterval = catTimeout(window.setInterval);
+      if (Math.random() < 0.01 && !!window.Document && !!window.HTMLElement) {
+        var cb_map = {};
+        var moon_lid = 0;
+        function catAddListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            var _cb = cb || function() {};
+            cb = function() {
+              try {
+                //arguments[0].currentTarget.setAttribute("data-moon_lid") = moon_lid;
+                //_cb.moon_lid = moon_lid;
+                return _cb.apply(that, arguments);
+              } catch (error) {
+                if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+                  console.error("[TryCatch]" + error.stack);
+                }
+                if (!!_idkey && !!window.__moon_report) { //没有初始化_key，直接throw error
+                  window.__moon_report([{ offset: MOON_LISTENER_ERROR_KEY_OFFSET, log: "listener_error;type:" + type + ";host:" + location.host, e: error }]);
+                  //breakOnError(timeoutkey);
+                }
+                throw error;
+              }
+            }
+            _cb.moon_lid = moon_lid;
+            cb_map[moon_lid] = cb;
+            moon_lid++;
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        function catRemoveListener(foo) {
+          return function(type, cb, useCapture) {
+            if (typeof useCapture === "undefined") {
+              var useCapture = false;
+            }
+            var that = this;
+            cb = cb_map[cb.moon_lid];
+            return foo.call(that, type, cb, useCapture);
+          }
+        }
+        Document.prototype.addEventListener = catAddListener(Document.prototype.addEventListener);
+        Document.prototype.removeEventListener = catRemoveListener(Document.prototype.removeEventListener);
+        HTMLElement.prototype.addEventListener = catAddListener(HTMLElement.prototype.addEventListener);
+        HTMLElement.prototype.removeEventListener = catRemoveListener(HTMLElement.prototype.removeEventListener);
+      }
+      //alert("setItem begin");
+      //window.localStorage.setItem = function(){a=c;}//故意
+      var ua = window.navigator.userAgent;
+      if ((/ip(hone|ad|od)/i.test(ua) || /android/i.test(ua)) && !/windows phone/i.test(ua) && !!window.localStorage && !!window.localStorage.setItem) {
+        var _setItem = window.localStorage.setItem;
+        var count = 0;
+        window.localStorage.setItem = function(k, v) {
+          if (count >= 10) { //一直失败 不要再继续试了，可能类似safari无痕模式 不允许写入了
+            return;
+          }
+          try {
+            _setItem.call(window.localStorage, k, v);
+          } catch (error) {
+            //alert(error);
+            if (error.stack && console && console.error) { //chrome有bug，特定情况下看不到throw的error，这里console.error下，防止给调试留坑
+              console.error("[TryCatch]" + error.stack);
+            }
+            window.__moon_report([{ offset: MOON_LOCALSTORAGE_ERROR_KEY_OFFSET, log: "localstorage_error;" + error.toString(), e: error }]);
+            count++;
+            if (count >= 3 && !!window.moon && window.moon.clear) {
+              // 可能爆满 清理一下localstorage
+              moon.clear();
+            }
+          }
+        }
+        //alert("setItem end");
+      }
+    })();
+    // 后面的@cunjinli
+  };
+  moon_init();
+  //由于moon异步化，所以有些逻辑需要moon加载完之后才执行的 放到全局callback函数__moon_initcallback里边
+  (!!window.__moon_initcallback) && (window.__moon_initcallback());
+}
+// 为适应inline逻辑，有map时才主动自执行 @zhikaimai
+// if (typeof window.moon_map == 'object') {
+//     __moonf__();
+// }
+__moonf__();
+
+if (!!window.addEventListener){
+  window.addEventListener("load",function(){
+    var MOON_SCRIPT_ERROR_KEY_OFFSET = 1; //script上报时的偏移量为1
+    var ns = document.querySelectorAll("[reportloaderror]");
+    for(var ni=0,nl=ns.length;ni<nl;ni++)
+      ns[ni].onerror=function(ev){
+        window.__moon_report([{ offset: MOON_SCRIPT_ERROR_KEY_OFFSET, log: "load_script_error:" + ev.target.src, e: new Error('LoadResError') }], 1);
+        window.WX_BJ_REPORT.BadJs.report("load_script_error", ev.target.src, { mid: "mmbizwap:Monitor" });
+      };
+  });
+}
+</script>
+
+    <script type="text/javascript" nonce="" reportloaderror>
+  var testRdmUrl = '//res.wx.qq.com/mmbizappmsg/zh_CN/htmledition/js/images/icon/common/icon_avatar_default5f0584.svg';
+  // 如果是资源是mp域名，则是rdm环境
+  if (testRdmUrl.indexOf('mp.weixin.qq.com') > 0) {
+    window.__allowLoadResFromMp = true; // 允许从mp.weixin.qq.com加载js资源
+    window.__loadAllResFromMp = true; // 所有js资源都从mp域名加载
+
+    // 给底色加个原谅绿
+    // document.documentElement.style.boxShadow = 'inset 0 0 15px green';
+  }
+</script>
+
+
+    
+    <title></title>
+    
+<link rel="stylesheet" type="text/css" href="//res.wx.qq.com/t/wx_fed/weui-source/res/2.5.4/weui.min.css" reportloaderror>
+
+
+    
+    <style>
+      .cooldown_tips {
+        margin: 30px auto;
+        margin-top: 0;
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        font-size: 14px;
+        background-color: #f6f7f9;
+        border-radius: 6px;
+      }   
+      .cooldown_tips_icon {
+        display: block;
+        width: 18px;
+        height: 18px;
+        margin-right: 8px;
+      }
+    </style>
+  </head>
+
+  <body id="activity-detail" class="zh_CN wx_wap_page   discuss_tab appmsg_skin_default appmsg_style_default">
+    
+    <link rel="dns-prefetch" href="//res.wx.qq.com" reportloaderror>
+<link rel="dns-prefetch" href="//mmbiz.qpic.cn" reportloaderror>
+<link rel="dns-prefetch" href="https://wxa.wxs.qq.com" reportloaderror>
+<link rel="shortcut icon" type="image/x-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/NTI4MWU5.ico" reportloaderror>
+<link rel="mask-icon" href="//res.wx.qq.com/a/wx_fed/assets/res/MjliNWVm.svg" color="#4C4C4C" reportloaderror>
+<link rel="apple-touch-icon-precomposed" href="//res.wx.qq.com/a/wx_fed/assets/res/OTE0YTAw.png" reportloaderror>
+<script type="text/javascript" nonce="" reportloaderror>
+String.prototype.html = function (encode) {
+  var replace = ["&#39;", "'", "&quot;", '"', "&nbsp;", " ", "&gt;", ">", "&lt;", "<", "&yen;", "¥", "&amp;", "&"];
+  // 最新版的safari 12有一个BUG，如果使用字面量定义一个数组，var a = [1, 2, 3]
+  // 当调用了 a.reverse() 方法把变量 a 元素顺序反转成 3, 2, 1 后，
+  // 即使此页面刷新了， 或者此页面使用 A标签、 window.open 打开的页面，
+  // 只要调用到同一段代码， 变量 a 的元素顺序都会变成 3, 2, 1
+  // 所以这里不用 reverse 方法
+  /*
+  if (encode) {
+      replace.reverse();
+  }*/
+  var replaceReverse = ["&", "&amp;", "¥", "&yen;", "<", "&lt;", ">", "&gt;", " ", "&nbsp;", '"', "&quot;", "'", "&#39;"];
+  var target;
+  if (encode) {
+    target = replaceReverse;
+  } else {
+    target = replace;
+  }
+  for (var i = 0, str = this; i < target.length; i += 2) {
+    str = str.replace(new RegExp(target[i], 'g'), target[i + 1]);
+  }
+  return str;
+};
+
+window.isInWeixinApp = function () {
+  return /MicroMessenger/.test(navigator.userAgent);
+};
+
+window.getQueryFromURL = function (url) {
+  url = url || 'http://qq.com/s?a=b#rd'; // 做一层保护，保证URL是合法的
+  var tmp = url.split('?'),
+    query = (tmp[1] || "").split('#')[0].split('&'),
+    params = {};
+  for (var i = 0; i < query.length; i++) {
+    var arg = query[i].split('=');
+    params[arg[0]] = arg[1];
+  }
+  if (params['pass_ticket']) {
+    params['pass_ticket'] = encodeURIComponent(params['pass_ticket'].html(false).html(false).replace(/\s/g, "+"));
+  }
+  return params;
+};
+
+(function () {
+  var params = getQueryFromURL(location.href);
+  window.uin = params['uin'] || "" || '';
+  window.key = params['key'] || "" || '';
+  window.wxtoken = params['wxtoken'] || '';
+  window.pass_ticket = params['pass_ticket'] || '';
+  window.appmsg_token = "";
+})();
+</script>
+     
+<div class="weui-msg">
+        <div class="weui-msg__icon-area"><i class="weui-icon-warn weui-icon_msg"></i></div>
+    <div class="weui-msg__text-area">
+        <h2 class="weui-msg__title">
+        链接已过期 
+        </h2>
+    </div>
+    </div>
+
+    <script type="text/javascript" nonce="" reportloaderror>
+window.logs.pagetime.page_begin = Date.now();
+</script>
+    <script type="text/javascript" nonce="" reportloaderror>
+var __DEBUGINFO = {
+  debug_js: "/mmbizwap/zh_CN/htmledition/js/biz_wap/debug/console.js",
+  safe_js: "/mmbizwap/zh_CN/htmledition/js/biz_wap/safe/moonsafe.js",
+  res_list: []
+};
+</script>
+
+<script type="text/javascript" nonce="" reportloaderror>
+(function () {
+  var totalCount = 0,
+    finishCount = 0;
+
+  function _loadVConsolePlugin() {
+    window.vConsole = new window.VConsole();
+    while (window.vConsolePlugins.length > 0) {
+      var p = window.vConsolePlugins.shift();
+      window.vConsole.addPlugin(p);
+    }
+    // 视频落地页h5有时候不会触发onload事件，导致vConsole无法渲染，这里手动强制渲染vConsole @baakqiu
+    if (!window.vConsole.isInited) {
+      window.vConsole._render();
+      window.vConsole._mockTap();
+      window.vConsole._bindEvent();
+      window.vConsole._autoRun();
+    }
+  }
+
+  function _addVConsole(uri, cb) {
+    totalCount++;
+    var node = document.createElement('SCRIPT');
+    node.type = 'text/javascript';
+    node.src = uri;
+    node.setAttribute('nonce', '');
+    if (cb) {
+      node.onload = cb;
+    }
+    document.getElementsByTagName('head')[0].appendChild(node);
+  }
+  if (
+    (document.cookie && document.cookie.indexOf('vconsole_open=1') > -1)
+    || location.href.indexOf('vconsole=1') > -1
+  ) {
+    window.vConsolePlugins = [];
+    _addVConsole('/mmbizwap/zh_CN/htmledition/js/vconsole/3.2.2/vconsole.min.js', function () {
+      // _addVConsole('plugin/vconsole-sources/1.0.1/vconsole-sources.min.js');
+      _addVConsole('/mmbizwap/zh_CN/htmledition/js/vconsole/plugin/vconsole-mpopt/1.0.1/vconsole-mpopt.js', _loadVConsolePlugin);
+    });
+  }
+
+  // // 广告iframe预加载
+  try {
+    var adIframeUrl = localStorage.getItem('__WXLS_ad_iframe_url');
+    if (window === top) {
+      if (adIframeUrl) {
+        if (navigator.userAgent.indexOf('iPhone') > -1) {
+          var img = new Image();
+          img.src = adIframeUrl;
+        } else {
+          var link = document.createElement('link');
+          link.rel = 'prefetch';
+          link.href = adIframeUrl;
+          document.getElementsByTagName('head')[0].appendChild(link);
+        }
+      }
+    }
+  } catch (err) {
+
+  }
+
+})();
+</script>
+    
+    
+    
+    <link rel="stylesheet" type="text/css" href="/mmbizwap/zh_CN/htmledition/style/page/appmsg_new/mod/weui_a11y.css" reportloaderror>
+
+
+
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_colon">：</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_comma">，</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_period">。</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_space">&nbsp;</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_video">视频</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_type_weapp">小程序</span>
+
+
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_txt">赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_zan_btn_tips">，轻点两下取消赞</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_txt">在看</span>
+<span aria-hidden="true" class="weui-a11y_ref" style="display:none" id="js_a11y_like_btn_tips">，轻点两下取消在看</span>
+
+  </body>
+</html>
+
+
